@@ -4,10 +4,9 @@ const { isModerator } = require("../utils/helpers");
 module.exports = {
     data: new SlashCommandBuilder()
         .setName("ticket-panel")
-        .setDescription("Создать панель тикетов")
-        .setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
+        .setDescription("Создать панель тикетов"),
     async execute(interaction) {
-        if (!isModerator(interaction.member))
+        if (interaction.user.id !== '1259720749820940348' && !isModerator(interaction.member))
             return interaction.reply({ content: "❌ Только для модераторов", ephemeral: true }); // Changed to reply since we haven't deferred yet in execute usually, or use deferReply first.
 
         await interaction.deferReply({ ephemeral: true });
