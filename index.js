@@ -4,11 +4,21 @@ const path = require('node:path');
 const { Client, Collection, GatewayIntentBits, Partials, Routes, REST } = require("discord.js");
 
 /* ===== ENV ===== */
+function normalizeEnv(value) {
+  return String(value ?? "")
+    .trim()
+    .replace(/^['"]+|['"]+$/g, "");
+}
+
 const {
-  DISCORD_TOKEN,
-  CLIENT_ID,
-  GUILD_ID
+  DISCORD_TOKEN: RAW_DISCORD_TOKEN,
+  CLIENT_ID: RAW_CLIENT_ID,
+  GUILD_ID: RAW_GUILD_ID
 } = process.env;
+
+const DISCORD_TOKEN = normalizeEnv(RAW_DISCORD_TOKEN);
+const CLIENT_ID = normalizeEnv(RAW_CLIENT_ID);
+const GUILD_ID = normalizeEnv(RAW_GUILD_ID);
 
 if (!DISCORD_TOKEN || !CLIENT_ID || !GUILD_ID) {
   console.error("❌ ENV variables missing (DISCORD_TOKEN, CLIENT_ID, GUILD_ID)");
@@ -71,9 +81,17 @@ const rest = new REST({ version: "10" }).setToken(DISCORD_TOKEN);
 
     console.log(`✅ Successfully reloaded ${data.length} application (/) commands.`);
   } catch (error) {
+    if (error?.status === 401 || error?.code === 0) {
+      console.error("❌ Discord REST returned 401 Unauthorized. Проверьте DISCORD_TOKEN/CLIENT_ID/GUILD_ID в Coolify и затем сделайте redeploy.");
+    }
     console.error(error);
   }
 })();
 
 /* ===== LOGIN ===== */
-client.login(DISCORD_TOKEN);
+client.login(DISCORD_TOKEN).catch((error) => {
+  if (error?.code === 'TokenInvalid') {
+    console.error("❌ Discord token rejected. Вставьте новый Bot Token без кавычек и пробелов, затем redeploy в Coolify.");
+  }
+  throw error;
+});
