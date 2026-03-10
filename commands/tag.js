@@ -1,6 +1,6 @@
 const {SlashCommandBuilder, PermissionFlagsBits} = require('discord.js');
 const {getSnippets, addSnippet, removeSnippet} = require('../utils/db');
-const {allowedMentionsNone, isAdmin} = require('../utils/helpers');
+const {allowedMentionsNone, isCurator, isAdmin} = require('../utils/helpers');
 
 function normalizeTagName(name) {
     const key = String(name ?? '').trim();
@@ -39,7 +39,7 @@ module.exports = {
     },
 
     async execute(interaction) {
-        if (!interaction.member.permissions.has(PermissionFlagsBits.ManageMessages) && !isAdmin(interaction.member)) {
+        if (!interaction.member.permissions.has(PermissionFlagsBits.ManageMessages) && !isCurator(interaction.member) && !isAdmin(interaction.member)) {
             return interaction.reply({content: '❌ Нет прав.', ephemeral: true});
         }
 

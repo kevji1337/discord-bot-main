@@ -2,6 +2,7 @@ const { SlashCommandBuilder } = require("discord.js");
 const {getTicketState} = require("../utils/db");
 const {
     isModerator,
+    isCurator,
     isAdmin,
     getSafeModeratorRoleIds,
     getSafePingRoleIds,
@@ -15,8 +16,8 @@ module.exports = {
     async execute(interaction) {
         await interaction.deferReply({ ephemeral: true });
 
-        if (!isModerator(interaction.member))
-            if (!isAdmin(interaction.member)) return interaction.editReply("❌ Нет прав");
+        if (!isModerator(interaction.member) && !isCurator(interaction.member) && !isAdmin(interaction.member))
+            return interaction.editReply("❌ Нет прав");
 
         const channel = interaction.channel;
         if (!channel.name.startsWith("ticket-"))
@@ -27,11 +28,11 @@ module.exports = {
         const ticket = getTicketState(channel.id);
         if (!ticket?.ownerId)
             return interaction.editReply("❌ Для этого тикета не найдены метаданные.");
-        if (ticket.category === 'moderator' || ticket.category === 'media')
+        if ((ticket.category === 'moderator' || ticket.category === 'media') && !isCurator(interaction.member))
             return interaction.editReply("❌ Для этого типа тикета помощь модераторов не используется.");
         if (!ticket.takenById)
             return interaction.editReply("❌ Сначала возьмите тикет.");
-        if (interaction.user.id !== ticket.takenById && !isAdmin(interaction.member))
+        if (interaction.user.id !== ticket.takenById && !isAdmin(interaction.member) && !isCurator(interaction.member))
             return interaction.editReply("❌ Помощь может вызвать только модератор, который взял тикет.");
 
         const modRoleIds = getSafeModeratorRoleIds(interaction.guild);

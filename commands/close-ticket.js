@@ -8,6 +8,7 @@ const {
 } = require("discord.js");
 const {
     isModerator,
+    isCurator,
     isAdmin,
     collectMessages,
     allowedMentionsNone,
@@ -78,7 +79,7 @@ module.exports = {
     async execute(interaction) {
         await interaction.deferReply({ ephemeral: true });
 
-        if (!isModerator(interaction.member) && !isAdmin(interaction.member))
+        if (!isModerator(interaction.member) && !isCurator(interaction.member) && !isAdmin(interaction.member))
             return interaction.editReply("❌ Нет прав");
 
         const channel = interaction.channel;

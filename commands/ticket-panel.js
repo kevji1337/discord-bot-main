@@ -1,5 +1,5 @@
 const { SlashCommandBuilder, PermissionFlagsBits, EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle } = require("discord.js");
-const {isModerator, isAdmin} = require("../utils/helpers");
+const {isModerator, isCurator, isAdmin} = require("../utils/helpers");
 
 const TICKET_PANEL_OWNER_ID = String(process.env.TICKET_PANEL_OWNER_ID ?? '1259720749820940348').trim();
 
@@ -8,7 +8,7 @@ module.exports = {
         .setName("ticket-panel")
         .setDescription("Создать панель тикетов"),
     async execute(interaction) {
-        if (interaction.user.id !== TICKET_PANEL_OWNER_ID && !isModerator(interaction.member) && !isAdmin(interaction.member))
+        if (interaction.user.id !== TICKET_PANEL_OWNER_ID && !isModerator(interaction.member) && !isCurator(interaction.member) && !isAdmin(interaction.member))
             return interaction.reply({ content: "❌ Только для модераторов", ephemeral: true }); // Changed to reply since we haven't deferred yet in execute usually, or use deferReply first.
 
         await interaction.deferReply({ ephemeral: true });

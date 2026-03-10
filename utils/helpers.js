@@ -1,4 +1,4 @@
-const {MODERATOR_ROLE_IDS, PING_ROLE_IDS, TICKET_CATEGORY_ID, TICKET_VIEW_ROLE_IDS} = process.env;
+const {MODERATOR_ROLE_IDS, PING_ROLE_IDS, TICKET_CATEGORY_ID, TICKET_VIEW_ROLE_IDS, CURATOR_ROLE_ID} = process.env;
 const {PermissionFlagsBits} = require('discord.js');
 
 function parseSnowflakeList(value) {
@@ -56,6 +56,13 @@ function isModerator(member) {
     return member.roles.cache.some(r => ids.includes(r.id));
 }
 
+function isCurator(member) {
+    if (!member || !member.roles) return false;
+    const id = String(CURATOR_ROLE_ID ?? '').trim();
+    if (!/^\d{17,20}$/.test(id)) return false;
+    return member.roles.cache.has(id);
+}
+
 function isAdmin(member) {
     return Boolean(member?.permissions?.has?.(PermissionFlagsBits.Administrator));
 }
@@ -95,6 +102,7 @@ module.exports = {
     getSafeModeratorRoleIds,
     getSafePingRoleIds,
     getTicketViewRoleIds,
+    isCurator,
     isAdmin,
     allowedMentionsNone,
     isTicketChannel,

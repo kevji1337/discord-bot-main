@@ -2,12 +2,14 @@ const { SlashCommandBuilder, ChannelType, PermissionFlagsBits } = require('disco
 const {getTicketState} = require('../utils/db');
 const {
     isModerator,
+    isCurator,
     isAdmin,
     getSafeModeratorRoleIds,
     getTicketViewRoleIds,
     ticketOwnerIdFromChannel
 } = require('../utils/helpers');
 const { TICKET_CATEGORY_ID } = process.env;
+const CURATOR_ROLE_ID = String(process.env.CURATOR_ROLE_ID ?? '').trim();
 
 async function findExistingTicketVoiceChannel(channel, ticketOwnerId) {
     const catId = String(process.env.TICKET_CATEGORY_ID ?? '').trim();
@@ -88,7 +90,7 @@ module.exports = {
             return interaction.reply({content: "❌ Не удалось определить владельца тикета.", ephemeral: true});
         }
 
-        if (!isModerator(interaction.member) && !isAdmin(interaction.member)) {
+        if (!isModerator(interaction.member) && !isCurator(interaction.member) && !isAdmin(interaction.member)) {
             return interaction.reply({ content: "❌ Нет прав доступа.", ephemeral: true });
         }
 
@@ -101,11 +103,12 @@ module.exports = {
         const takenMatch = interaction.channel.topic?.match(/TAKEN_BY:(\d{17,20})/);
         const takenById = ticket?.takenById || (takenMatch ? takenMatch[1] : null);
         const memberIsAdmin = isAdmin(interaction.member);
+        const memberIsCurator = isCurator(interaction.member);
         if (!takenById) return interaction.reply({
             content: "❌ Сначала возьмите тикет, затем создайте voice.",
             ephemeral: true
         });
-        if (interaction.user.id !== takenById && !memberIsAdmin) return interaction.reply({
+        if (interaction.user.id !== takenById && !memberIsAdmin && !memberIsCurator) return interaction.reply({
             content: "❌ Создавать voice может только модератор, который взял тикет.",
             ephemeral: true
         });
@@ -129,6 +132,7 @@ module.exports = {
             const botId = interaction.guild.members.me?.id || interaction.client.user.id;
             const modRoleIds = getSafeModeratorRoleIds(interaction.guild);
             const viewRoleIds = getTicketViewRoleIds(interaction.guild);
+            const curatorRoleIds = CURATOR_ROLE_ID && /^\d{17,20}$/.test(CURATOR_ROLE_ID) ? [CURATOR_ROLE_ID] : [];
             const voice = await interaction.guild.channels.create({
                 name: voiceName,
                 type: ChannelType.GuildVoice,
@@ -137,6 +141,10 @@ module.exports = {
                     { id: interaction.guild.id, deny: [PermissionFlagsBits.ViewChannel] },
                     { id: botId, allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.Connect, PermissionFlagsBits.Speak, PermissionFlagsBits.ManageChannels] },
                     { id: ticketOwnerId, allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.Connect, PermissionFlagsBits.Speak] },
+                    ...curatorRoleIds.map(id => ({
+                        id,
+                        allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.Connect, PermissionFlagsBits.Speak]
+                    })),
                     ...modRoleIds.map(id => ({
                         id,
                         allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.Connect, PermissionFlagsBits.Speak]

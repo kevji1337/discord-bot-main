@@ -1,5 +1,5 @@
 const {SlashCommandBuilder, PermissionFlagsBits} = require('discord.js');
-const {isAdmin} = require('../utils/helpers');
+const {isCurator, isAdmin} = require('../utils/helpers');
 const {getBannedUsers, banUser, unbanUser} = require('../utils/db');
 
 module.exports = {
@@ -16,7 +16,7 @@ module.exports = {
                 .addUserOption(opt => opt.setName('user').setDescription('Пользователь').setRequired(true))
         ),
     async execute(interaction) {
-        if (!interaction.member.permissions.has(PermissionFlagsBits.BanMembers) && !isAdmin(interaction.member)) {
+        if (!interaction.member.permissions.has(PermissionFlagsBits.BanMembers) && !isCurator(interaction.member) && !isAdmin(interaction.member)) {
             return interaction.reply({content: '❌ Нет прав.', ephemeral: true});
         }
 

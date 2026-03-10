@@ -1,6 +1,6 @@
 const {SlashCommandBuilder, EmbedBuilder, PermissionFlagsBits} = require('discord.js');
 const {getStaffStats} = require('../utils/db');
-const {isAdmin} = require('../utils/helpers');
+const {isCurator, isAdmin} = require('../utils/helpers');
 
 module.exports = {
     data: new SlashCommandBuilder()
@@ -8,7 +8,7 @@ module.exports = {
         .setDescription('Статистика работы модераторов')
         .setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
     async execute(interaction) {
-        if (!interaction.member.permissions.has(PermissionFlagsBits.Administrator) && !isAdmin(interaction.member)) {
+        if (!interaction.member.permissions.has(PermissionFlagsBits.Administrator) && !isCurator(interaction.member) && !isAdmin(interaction.member)) {
             return interaction.reply({content: '❌ Нет прав.', ephemeral: true});
         }
 

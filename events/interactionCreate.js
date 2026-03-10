@@ -15,6 +15,7 @@ const {
 
 const {
     isModerator,
+    isCurator,
     isAdmin,
     getSafeModeratorRoleIds,
     getSafePingRoleIds,
@@ -147,9 +148,9 @@ function buildCategoryModal(category) {
             new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId('app_why').setLabel("Почему именно вы?").setStyle(TextInputStyle.Paragraph).setRequired(true))
         );
     } else if (category === 'media') {
-        modal.setTitle('Заявка на Ютубера');
+        modal.setTitle('Заявка на Медиа');
         modal.addComponents(
-            new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId('media_link').setLabel("Ссылка на канал").setStyle(TextInputStyle.Short).setRequired(true)),
+            new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId('media_link').setLabel("Ссылка на канал / аккаунт").setStyle(TextInputStyle.Short).setRequired(true)),
             new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId('media_stats').setLabel("Количество подписчиков").setStyle(TextInputStyle.Short).setRequired(true)),
             new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId('media_views').setLabel("Среднее кол-во просмотров").setStyle(TextInputStyle.Short).setRequired(true)),
             new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId('media_desc').setLabel("Формат сотрудничества").setStyle(TextInputStyle.Paragraph).setRequired(true))
@@ -183,13 +184,14 @@ function inferTicketCategory(ticket, message) {
 
     const embedTitle = message?.embeds?.[0]?.title || '';
     if (embedTitle.includes('Заявка на Модератора')) return 'moderator';
-    if (embedTitle.includes('Заявка на Ютубера')) return 'media';
+    if (embedTitle.includes('Заявка на Медиа') || embedTitle.includes('Заявка на Ютубера')) return 'media';
     if (embedTitle.includes('Вопрос')) return 'question';
     if (embedTitle.includes('Техническая проблема')) return 'tech';
     return 'question';
 }
 
 function canTakeTicket(member, category) {
+    if (isCurator(member) || isAdmin(member)) return true;
     if (category === 'moderator') {
         return member?.roles?.cache?.has?.(CURATOR_ROLE_ID) || isAdmin(member);
     }
@@ -239,11 +241,11 @@ function buildTicketEmbed(category, interaction, user) {
                 {name: "Мотивация", value: interaction.fields.getTextInputValue('app_why')}
             );
     } else if (category === 'media') {
-        embed.setTitle('📹 Заявка на Ютубера')
+        embed.setTitle('📹 Заявка на Медиа')
             .setColor(0xf1c40f)
             .addFields(
                 {name: "Кандидат", value: `${user} (${user.tag})`, inline: true},
-                {name: "Канал", value: interaction.fields.getTextInputValue('media_link')},
+                {name: "Канал / аккаунт", value: interaction.fields.getTextInputValue('media_link')},
                 {name: "Подписчики", value: interaction.fields.getTextInputValue('media_stats'), inline: true},
                 {name: "Просмотры", value: interaction.fields.getTextInputValue('media_views'), inline: true},
                 {name: "Формат", value: interaction.fields.getTextInputValue('media_desc')}
@@ -322,7 +324,7 @@ module.exports = {
                         new StringSelectMenuOptionBuilder().setLabel('Техническая проблема').setValue('tech').setEmoji('🛠️').setDescription('Не запускается, крашит, ошибки'),
                         new StringSelectMenuOptionBuilder().setLabel('Вопрос').setValue('question').setEmoji('❓').setDescription('Общие вопросы'),
                         new StringSelectMenuOptionBuilder().setLabel('Заявка на Модератора').setValue('moderator').setEmoji('👮‍♂️').setDescription('Вступить в команду'),
-                        new StringSelectMenuOptionBuilder().setLabel('Заявка на Ютубера').setValue('media').setEmoji('📹').setDescription('Сотрудничество')
+                        new StringSelectMenuOptionBuilder().setLabel('Заявка на Медиа').setValue('media').setEmoji('📹').setDescription('Тиктокер / Ютубер / сотрудничество')
                     );
 
                 return interaction.reply({
@@ -424,7 +426,8 @@ module.exports = {
                 const takenById = ticket?.takenById || (takenMatch ? takenMatch[1] : null);
                 if (!takenById) return interaction.editReply("❌ Сначала возьмите тикет, затем создайте voice.");
                 const memberIsAdmin = isAdmin(interaction.member);
-                if (interaction.user.id !== takenById && !memberIsAdmin) return interaction.editReply("❌ Создавать voice может только модератор, который взял тикет.");
+                const memberIsCurator = isCurator(interaction.member);
+                if (interaction.user.id !== takenById && !memberIsAdmin && !memberIsCurator) return interaction.editReply("❌ Создавать voice может только модератор, который взял тикет.");
 
                 const existing = await findExistingTicketVoiceChannel(interaction.channel, ticketOwnerId);
                 if (existing) return interaction.editReply(`⚠️ Голосовой канал для этого тикета уже создан: ${existing}`);
@@ -438,6 +441,7 @@ module.exports = {
                 const botId = interaction.guild.members.me?.id || interaction.client.user.id;
                 const modRoleIds = getSafeModeratorRoleIds(interaction.guild);
                 const viewRoleIds = getTicketViewRoleIds(interaction.guild);
+                const curatorRoleIds = uniqSnowflakes([CURATOR_ROLE_ID]);
 
                 try {
                     const lock = await acquireVoiceLock(interaction.channel, interaction.id);
@@ -467,6 +471,10 @@ module.exports = {
                                 id: ticketOwnerId,
                                 allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.Connect, PermissionFlagsBits.Speak]
                             },
+                            ...curatorRoleIds.map(id => ({
+                                id,
+                                allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.Connect, PermissionFlagsBits.Speak]
+                            })),
                             ...uniqSnowflakes(modRoleIds).map(id => ({
                                 id,
                                 allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.Connect, PermissionFlagsBits.Speak]
@@ -496,7 +504,7 @@ module.exports = {
                 if (!isInTicketCategory(interaction.channel) || !ticket?.ownerId) {
                     return interaction.reply({content: "❌ Это не активный тикет.", ephemeral: true});
                 }
-                if (ticket.category === 'moderator' || ticket.category === 'media') {
+                if ((ticket.category === 'moderator' || ticket.category === 'media') && !isCurator(interaction.member)) {
                     return interaction.reply({
                         content: "❌ Для этого типа тикета помощь модераторов не используется.",
                         ephemeral: true
@@ -505,10 +513,10 @@ module.exports = {
                 if (!ticket.takenById) {
                     return interaction.reply({content: "❌ Сначала возьмите тикет.", ephemeral: true});
                 }
-                if (!isModerator(interaction.member) && !isAdmin(interaction.member)) {
+                if (!isModerator(interaction.member) && !isCurator(interaction.member) && !isAdmin(interaction.member)) {
                     return interaction.reply({content: "❌ Нет прав.", ephemeral: true});
                 }
-                if (interaction.user.id !== ticket.takenById && !isAdmin(interaction.member)) {
+                if (interaction.user.id !== ticket.takenById && !isCurator(interaction.member) && !isAdmin(interaction.member)) {
                     return interaction.reply({
                         content: "❌ Помощь может вызвать только модератор, который взял тикет.",
                         ephemeral: true
@@ -603,6 +611,7 @@ module.exports = {
             const botId = guild.members.me?.id || interaction.client.user.id;
             const modRoleIds = getSafeModeratorRoleIds(guild);
             const viewRoleIds = getTicketViewRoleIds(guild);
+            const curatorRoleIds = uniqSnowflakes([CURATOR_ROLE_ID]);
 
             const permissionOverwrites = [
                 {id: guild.id, deny: [PermissionFlagsBits.ViewChannel]},
@@ -615,6 +624,10 @@ module.exports = {
                     allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.ReadMessageHistory],
                     deny: [PermissionFlagsBits.SendMessages]
                 },
+                ...curatorRoleIds.map(id => ({
+                    id,
+                    allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages, PermissionFlagsBits.ReadMessageHistory]
+                })),
                 ...uniqSnowflakes(viewRoleIds).map(id => ({
                     id,
                     allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.ReadMessageHistory]
