@@ -283,3 +283,12 @@ exports.setTicketFeedback = (ticketId, feedback) => {
     };
     saveJSON('ticket_feedback.json', data);
 };
+
+// SETTINGS
+exports.getSettings = () => loadJSON('settings.json', { moderator_recruitment: 'open', media_recruitment: 'open' });
+exports.setSetting = (key, value) => {
+    if (isDangerousKey(key)) throw new Error('Invalid setting key');
+    const settings = exports.getSettings();
+    settings[key] = value;
+    saveJSON('settings.json', settings);
+};

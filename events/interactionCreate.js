@@ -33,7 +33,8 @@ const {
     setTicketTakenBy,
     hasTicketFeedback,
     setTicketFeedback,
-    addStaffAction
+    addStaffAction,
+    getSettings
 } = require('../utils/db');
 
 const {TICKET_CATEGORY_ID, LOG_CHANNEL_ID} = process.env;
@@ -317,15 +318,24 @@ module.exports = {
                     ? "\n⚠️ **Внимание:** Сейчас нерабочее время (10:00 - 22:00 МСК). Мы ответим утром."
                     : "";
 
+                const settings = getSettings();
+                const options = [
+                    new StringSelectMenuOptionBuilder().setLabel('Техническая проблема').setValue('tech').setEmoji('🛠️').setDescription('Не запускается, крашит, ошибки'),
+                    new StringSelectMenuOptionBuilder().setLabel('Вопрос').setValue('question').setEmoji('❓').setDescription('Общие вопросы')
+                ];
+
+                if (settings.moderator_recruitment === 'open') {
+                    options.push(new StringSelectMenuOptionBuilder().setLabel('Заявка на Модератора').setValue('moderator').setEmoji('👮‍♂️').setDescription('Вступить в команду'));
+                }
+
+                if (settings.media_recruitment === 'open') {
+                    options.push(new StringSelectMenuOptionBuilder().setLabel('Заявка на Медиа').setValue('media').setEmoji('📹').setDescription('Тиктокер / Ютубер / сотрудничество'));
+                }
+
                 const select = new StringSelectMenuBuilder()
                     .setCustomId('ticket_category_select')
                     .setPlaceholder('Выберите тему обращения')
-                    .addOptions(
-                        new StringSelectMenuOptionBuilder().setLabel('Техническая проблема').setValue('tech').setEmoji('🛠️').setDescription('Не запускается, крашит, ошибки'),
-                        new StringSelectMenuOptionBuilder().setLabel('Вопрос').setValue('question').setEmoji('❓').setDescription('Общие вопросы'),
-                        new StringSelectMenuOptionBuilder().setLabel('Заявка на Модератора').setValue('moderator').setEmoji('👮‍♂️').setDescription('Вступить в команду'),
-                        new StringSelectMenuOptionBuilder().setLabel('Заявка на Медиа').setValue('media').setEmoji('📹').setDescription('Тиктокер / Ютубер / сотрудничество')
-                    );
+                    .addOptions(options);
 
                 return interaction.reply({
                     content: `Пожалуйста, выберите категорию вашего вопроса.${warning}`,
