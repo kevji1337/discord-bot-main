@@ -7,7 +7,8 @@ const {
     getSafePingRoleIds,
     isInTicketCategory,
     buildTicketTopic,
-    getTicketChannelState
+    getTicketChannelState,
+    editOverwriteSafe
 } = require("../utils/helpers");
 
 const helpCooldown = new Map();
@@ -52,7 +53,7 @@ module.exports = {
 
         const modRoleIds = getSafeModeratorRoleIds(interaction.guild);
         for (const roleId of modRoleIds) {
-            await channel.permissionOverwrites.edit(roleId, {
+            await editOverwriteSafe(channel, interaction.guild, roleId, {
                 SendMessages: true,
                 ViewChannel: true
             });

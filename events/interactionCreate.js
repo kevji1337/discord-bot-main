@@ -21,6 +21,7 @@ const {
     getSafeModeratorRoleIds,
     getSafePingRoleIds,
     getTicketViewRoleIds,
+    editOverwriteSafe,
     allowedMentionsNone,
     isTicketChannel,
     buildTicketTopic,
@@ -259,199 +260,208 @@ function buildTicketEmbed(category, interaction, user) {
 module.exports = {
     name: Events.InteractionCreate,
     async execute(interaction) {
-        if (isTicketChannel(interaction.channel) && interaction.user && !interaction.user.bot) {
-            updateTicketActivity(interaction.channel.id);
-        }
-
-        if (interaction.isAutocomplete()) {
-            const command = interaction.client.commands.get(interaction.commandName);
-            if (!command || !command.autocomplete) return;
-            try {
-                await command.autocomplete(interaction);
-            } catch (e) {
-                console.error(e);
-            }
-            return;
-        }
-
-        if (interaction.isChatInputCommand()) {
-            const command = interaction.client.commands.get(interaction.commandName);
-            if (!command) return;
-            try {
-                await command.execute(interaction);
-            } catch (error) {
-                console.error(error);
-                if (interaction.replied || interaction.deferred) await interaction.followUp({
-                    content: 'Error!',
-                    ephemeral: true
-                });
-                else await interaction.reply({content: 'Error!', ephemeral: true});
-            }
-            return;
-        }
-
-        if (interaction.isStringSelectMenu()) {
-            if (interaction.customId === 'ticket_category_select') {
-                const category = interaction.values[0];
-                if (!ALLOWED_TICKET_CATEGORIES.has(category)) {
-                    return interaction.reply({content: '❌ Некорректная категория тикета.', ephemeral: true});
-                }
-                const modal = buildCategoryModal(category);
-                await interaction.showModal(modal);
-            }
-            return;
-        }
-
-        if (interaction.isButton()) {
-            if (interaction.customId === "create_ticket") {
-                if (hitCooldown(createTicketCooldown, interaction.user.id, 3_000)) {
-                    return interaction.reply({content: "⏳ Подождите пару секунд перед повторным созданием тикета.", ephemeral: true});
-                }
-                if (getBannedUsers().includes(interaction.user.id)) {
-                    return interaction.reply({content: "🚫 Вы заблокированы в системе поддержки.", ephemeral: true});
-                }
-
-                const existing = findExistingTicketChannelForUser(interaction.guild, interaction.user.id);
-                if (existing) {
-                    return interaction.reply({content: `❌ У вас уже есть тикет: ${existing}`, ephemeral: true});
-                }
-
-                const h = getMskHour();
-                const warning = (h < 10 || h >= 22)
-                    ? "\n⚠️ **Внимание:** Сейчас нерабочее время (10:00 - 22:00 МСК). Мы ответим утром."
-                    : "";
-
-                const settings = getSettings();
-                const options = [
-                    new StringSelectMenuOptionBuilder().setLabel('Техническая проблема').setValue('tech').setEmoji('🛠️').setDescription('Не запускается, крашит, ошибки'),
-                    new StringSelectMenuOptionBuilder().setLabel('Вопрос').setValue('question').setEmoji('❓').setDescription('Общие вопросы')
-                ];
-
-                if (settings.moderator_recruitment === 'open') {
-                    options.push(new StringSelectMenuOptionBuilder().setLabel('Заявка на Модератора').setValue('moderator').setEmoji('👮‍♂️').setDescription('Вступить в команду'));
-                }
-
-                if (settings.media_recruitment === 'open') {
-                    options.push(new StringSelectMenuOptionBuilder().setLabel('Заявка на Медиа').setValue('media').setEmoji('📹').setDescription('Тиктокер / Ютубер / сотрудничество'));
-                }
-
-                const select = new StringSelectMenuBuilder()
-                    .setCustomId('ticket_category_select')
-                    .setPlaceholder('Выберите тему обращения')
-                    .addOptions(options);
-
-                return interaction.reply({
-                    content: `Пожалуйста, выберите категорию вашего вопроса.${warning}`,
-                    components: [new ActionRowBuilder().addComponents(select)],
-                    ephemeral: true
-                });
+        try {
+            if (isTicketChannel(interaction.channel) && interaction.user && !interaction.user.bot) {
+                updateTicketActivity(interaction.channel.id);
             }
 
-            if (interaction.customId === "take_ticket") {
-                await interaction.deferReply({ ephemeral: true });
-
-                const channel = interaction.channel;
-                if (takeTicketInFlight.has(channel.id)) {
-                    return interaction.editReply("⏳ Тикет уже берётся другим модератором, подождите.");
-                }
-                takeTicketInFlight.add(channel.id);
+            if (interaction.isAutocomplete()) {
+                const command = interaction.client.commands.get(interaction.commandName);
+                if (!command || !command.autocomplete) return;
                 try {
-                const ticket = getTicketStateFromChannel(channel);
-                if (!ticket?.ownerId) return interaction.editReply("❌ Не удалось определить владельца тикета.");
+                    await command.autocomplete(interaction);
+                } catch (e) {
+                    console.error(e);
+                }
+                return;
+            }
 
-                if (!isInTicketCategory(channel)) return interaction.editReply("❌ Этот канал не находится в категории тикетов.");
+            if (interaction.isChatInputCommand()) {
+                const command = interaction.client.commands.get(interaction.commandName);
+                if (!command) return;
+                try {
+                    await command.execute(interaction);
+                } catch (error) {
+                    console.error(error);
+                    if (interaction.replied || interaction.deferred) await interaction.followUp({
+                        content: 'Error!',
+                        ephemeral: true
+                    });
+                    else await interaction.reply({content: 'Error!', ephemeral: true});
+                }
+                return;
+            }
 
-                const ticketCategory = inferTicketCategory(ticket, interaction.message);
-                if (!canTakeTicket(interaction.member, ticketCategory)) {
-                    if (ticketCategory === 'moderator') return interaction.editReply("❌ Только для Кураторов");
-                    if (ticketCategory === 'media') return interaction.editReply("❌ Только для Медиа-менеджеров");
-                    return interaction.editReply("❌ Только модератор");
+            if (interaction.isStringSelectMenu()) {
+                if (interaction.customId === 'ticket_category_select') {
+                    const category = interaction.values[0];
+                    if (!ALLOWED_TICKET_CATEGORIES.has(category)) {
+                        return interaction.reply({content: '❌ Некорректная категория тикета.', ephemeral: true});
+                    }
+                    const modal = buildCategoryModal(category);
+                    await interaction.showModal(modal);
+                }
+                return;
+            }
+
+            if (interaction.isButton()) {
+                if (interaction.customId === "create_ticket") {
+                    if (hitCooldown(createTicketCooldown, interaction.user.id, 3_000)) {
+                        return interaction.reply({content: "⏳ Подождите пару секунд перед повторным созданием тикета.", ephemeral: true});
+                    }
+                    if (getBannedUsers().includes(interaction.user.id)) {
+                        return interaction.reply({content: "🚫 Вы заблокированы в системе поддержки.", ephemeral: true});
+                    }
+
+                    const existing = findExistingTicketChannelForUser(interaction.guild, interaction.user.id);
+                    if (existing) {
+                        return interaction.reply({content: `❌ У вас уже есть тикет: ${existing}`, ephemeral: true});
+                    }
+
+                    const h = getMskHour();
+                    const warning = (h < 10 || h >= 22)
+                        ? "\n⚠️ **Внимание:** Сейчас нерабочее время (10:00 - 22:00 МСК). Мы ответим утром."
+                        : "";
+
+                    const settings = getSettings();
+                    const options = [
+                        new StringSelectMenuOptionBuilder().setLabel('Техническая проблема').setValue('tech').setEmoji('🛠️').setDescription('Не запускается, крашит, ошибки'),
+                        new StringSelectMenuOptionBuilder().setLabel('Вопрос').setValue('question').setEmoji('❓').setDescription('Общие вопросы')
+                    ];
+
+                    if (settings.moderator_recruitment === 'open') {
+                        options.push(new StringSelectMenuOptionBuilder().setLabel('Заявка на Модератора').setValue('moderator').setEmoji('👮‍♂️').setDescription('Вступить в команду'));
+                    }
+
+                    if (settings.media_recruitment === 'open') {
+                        options.push(new StringSelectMenuOptionBuilder().setLabel('Заявка на Медиа').setValue('media').setEmoji('📹').setDescription('Тиктокер / Ютубер / сотрудничество'));
+                    }
+
+                    const select = new StringSelectMenuBuilder()
+                        .setCustomId('ticket_category_select')
+                        .setPlaceholder('Выберите тему обращения')
+                        .addOptions(options);
+
+                    return interaction.reply({
+                        content: `Пожалуйста, выберите категорию вашего вопроса.${warning}`,
+                        components: [new ActionRowBuilder().addComponents(select)],
+                        ephemeral: true
+                    });
                 }
 
-                if (ticket.takenById) {
-                    return interaction.editReply("❌ Тикет уже занят.");
-                }
+                if (interaction.customId === "take_ticket") {
+                    await interaction.deferReply({ ephemeral: true });
 
-                await channel.setTopic(buildTicketTopic({
-                    ...ticket,
-                    ownerId: ticket.ownerId,
-                    category: ticketCategory,
-                    takenById: interaction.user.id,
-                    helpOpen: false
-                }));
-                await channel.permissionOverwrites.edit(interaction.user.id, {
-                    SendMessages: true,
-                    ViewChannel: true,
-                    ReadMessageHistory: true
-                });
-                await channel.permissionOverwrites.edit(ticket.ownerId, {
-                    SendMessages: true,
-                    ViewChannel: true,
-                    ReadMessageHistory: true
-                });
+                    const channel = interaction.channel;
+                    if (takeTicketInFlight.has(channel.id)) {
+                        return interaction.editReply("⏳ Тикет уже берётся другим модератором, подождите.");
+                    }
+                    takeTicketInFlight.add(channel.id);
+                    try {
+                    const ticket = getTicketStateFromChannel(channel);
+                    if (!ticket?.ownerId) return interaction.editReply("❌ Не удалось определить владельца тикета.");
 
-                if (getTicketState(channel.id)) {
-                    setTicketTakenBy(channel.id, interaction.user.id);
-                } else {
-                    createTicketState(channel.id, {
+                    if (!isInTicketCategory(channel)) return interaction.editReply("❌ Этот канал не находится в категории тикетов.");
+
+                    const ticketCategory = inferTicketCategory(ticket, interaction.message);
+                    if (!canTakeTicket(interaction.member, ticketCategory)) {
+                        if (ticketCategory === 'moderator') return interaction.editReply("❌ Только для Кураторов");
+                        if (ticketCategory === 'media') return interaction.editReply("❌ Только для Медиа-менеджеров");
+                        return interaction.editReply("❌ Только модератор");
+                    }
+
+                    if (ticket.takenById) {
+                        return interaction.editReply("❌ Тикет уже занят.");
+                    }
+
+                    const takerOverwriteOk = await editOverwriteSafe(channel, interaction.guild, interaction.user.id, {
+                        SendMessages: true,
+                        ViewChannel: true,
+                        ReadMessageHistory: true
+                    });
+                    if (!takerOverwriteOk) {
+                        return interaction.editReply("❌ Не удалось выдать доступ модератору, который взял тикет.");
+                    }
+
+                    const ownerOverwriteOk = await editOverwriteSafe(channel, interaction.guild, ticket.ownerId, {
+                        SendMessages: true,
+                        ViewChannel: true,
+                        ReadMessageHistory: true
+                    });
+                    if (!ownerOverwriteOk) {
+                        return interaction.editReply("❌ Владелец тикета не найден на сервере, доступ выдать не удалось.");
+                    }
+
+                    await channel.setTopic(buildTicketTopic({
+                        ...ticket,
                         ownerId: ticket.ownerId,
                         category: ticketCategory,
                         takenById: interaction.user.id,
-                        createdAt: Date.now(),
-                        takenAt: Date.now(),
-                        lastActive: Date.now(),
-                        guildId: interaction.guild.id
-                    });
-                }
+                        helpOpen: false
+                    }));
 
-                const viewRoleIds = new Set(getTicketViewRoleIds(interaction.guild));
-                for (const roleId of getSafeModeratorRoleIds(interaction.guild)) {
-                    if (viewRoleIds.has(roleId)) {
-                        await channel.permissionOverwrites.edit(roleId, {
-                            ViewChannel: true,
-                            SendMessages: false,
-                            ReadMessageHistory: true
+                    if (getTicketState(channel.id)) {
+                        setTicketTakenBy(channel.id, interaction.user.id);
+                    } else {
+                        createTicketState(channel.id, {
+                            ownerId: ticket.ownerId,
+                            category: ticketCategory,
+                            takenById: interaction.user.id,
+                            createdAt: Date.now(),
+                            takenAt: Date.now(),
+                            lastActive: Date.now(),
+                            guildId: interaction.guild.id
                         });
-                        continue;
                     }
-                    await channel.permissionOverwrites.edit(roleId, {
-                        ViewChannel: false,
-                        SendMessages: false
+
+                    const viewRoleIds = new Set(getTicketViewRoleIds(interaction.guild));
+                    for (const roleId of getSafeModeratorRoleIds(interaction.guild)) {
+                        if (viewRoleIds.has(roleId)) {
+                            await editOverwriteSafe(channel, interaction.guild, roleId, {
+                                ViewChannel: true,
+                                SendMessages: false,
+                                ReadMessageHistory: true
+                            });
+                            continue;
+                        }
+                        await editOverwriteSafe(channel, interaction.guild, roleId, {
+                            ViewChannel: false,
+                            SendMessages: false
+                        });
+                    }
+                    if (ticketCategory === 'media' && /^\d{17,20}$/.test(MEDIA_MANAGER_ROLE_ID)) {
+                        await editOverwriteSafe(channel, interaction.guild, MEDIA_MANAGER_ROLE_ID, {
+                            ViewChannel: true,
+                            ReadMessageHistory: true,
+                            SendMessages: false
+                        });
+                    }
+
+                    const components = [
+                        new ButtonBuilder().setCustomId("create_voice").setLabel("Создать Voice").setEmoji("🔊").setStyle(ButtonStyle.Primary)
+                    ];
+                    if (ticketCategory !== 'moderator' && ticketCategory !== 'media') {
+                        components.push(new ButtonBuilder().setCustomId("escalate_ticket").setLabel("🆘 Позвать других модераторов").setStyle(ButtonStyle.Danger));
+                    }
+
+                    try {
+                        await interaction.message.edit({components: [new ActionRowBuilder().addComponents(components)]});
+                    } catch (e) {
+                        console.error("Failed to update main message buttons:", e);
+                    }
+
+                    await channel.send({
+                        content: `🟢 **Тикет взял ${interaction.user.tag}**`,
+                        allowedMentions: allowedMentionsNone()
                     });
-                }
-                if (ticketCategory === 'media' && /^\d{17,20}$/.test(MEDIA_MANAGER_ROLE_ID)) {
-                    await channel.permissionOverwrites.edit(MEDIA_MANAGER_ROLE_ID, {
-                        ViewChannel: true,
-                        ReadMessageHistory: true,
-                        SendMessages: false
-                    });
+                    return interaction.editReply({content: "✅ Вы взяли тикет.", components: []});
+                    } finally {
+                        takeTicketInFlight.delete(channel.id);
+                    }
                 }
 
-                const components = [
-                    new ButtonBuilder().setCustomId("create_voice").setLabel("Создать Voice").setEmoji("🔊").setStyle(ButtonStyle.Primary)
-                ];
-                if (ticketCategory !== 'moderator' && ticketCategory !== 'media') {
-                    components.push(new ButtonBuilder().setCustomId("escalate_ticket").setLabel("🆘 Позвать других модераторов").setStyle(ButtonStyle.Danger));
-                }
-
-                try {
-                    await interaction.message.edit({components: [new ActionRowBuilder().addComponents(components)]});
-                } catch (e) {
-                    console.error("Failed to update main message buttons:", e);
-                }
-
-                await channel.send({
-                    content: `🟢 **Тикет взял ${interaction.user.tag}**`,
-                    allowedMentions: allowedMentionsNone()
-                });
-                return interaction.editReply({content: "✅ Вы взяли тикет.", components: []});
-                } finally {
-                    takeTicketInFlight.delete(channel.id);
-                }
-            }
-
-            if (interaction.customId === "create_voice") {
-                await interaction.deferReply({ephemeral: true});
+                if (interaction.customId === "create_voice") {
+                    await interaction.deferReply({ephemeral: true});
 
                 if (!isInTicketCategory(interaction.channel)) {
                     return interaction.editReply("❌ Этот канал не находится в категории тикетов.");
@@ -587,10 +597,10 @@ module.exports = {
                     content: `🆘 **HELP APPROVED** ${pings}\nМодератор ${interaction.user} открыл доступ к тикету для помощи.`,
                     allowedMentions: {parse: [], roles: pingRoleIds, users: []}
                 });
-                return;
-            }
+                    return;
+                }
 
-            if (interaction.customId.startsWith("rate:")) {
+                if (interaction.customId.startsWith("rate:")) {
                 const [, ticketId, staffId, rawRating] = interaction.customId.split(':');
                 const rating = Number.parseInt(rawRating, 10);
                 if (!/^\d{17,20}$/.test(String(ticketId ?? '')) || !/^\d{17,20}$/.test(String(staffId ?? '')) || !Number.isInteger(rating) || rating < 1 || rating > 5) {
@@ -630,17 +640,17 @@ module.exports = {
                 } catch (e) {
                     console.error("Failed to log rating:", e);
                 }
-                return;
-            }
+                    return;
+                }
 
-            if (interaction.customId.startsWith("rate_")) {
+                if (interaction.customId.startsWith("rate_")) {
                 const rating = parseInt(interaction.customId.split("_")[1], 10);
                 await interaction.update({content: `✅ Спасибо за оценку: ${rating} ⭐`, components: [], embeds: []});
-                return;
+                    return;
+                }
             }
-        }
 
-        if (interaction.isModalSubmit()) {
+            if (interaction.isModalSubmit()) {
             if (!interaction.customId.startsWith('ticket_modal_')) return;
             const category = interaction.customId.split('_')[2];
             if (!ALLOWED_TICKET_CATEGORIES.has(category)) {
@@ -760,6 +770,18 @@ module.exports = {
                 return interaction.editReply({content: `✅ Тикет создан: ${channel}`});
             } finally {
                 ticketSubmitInFlight.delete(submitKey);
+            }
+            }
+        } catch (error) {
+            console.error('InteractionCreate error:', error);
+            try {
+                if (interaction?.replied || interaction?.deferred) {
+                    await interaction.followUp({content: '❌ Произошла ошибка при обработке interaction.', ephemeral: true});
+                } else if (interaction?.isRepliable?.()) {
+                    await interaction.reply({content: '❌ Произошла ошибка при обработке interaction.', ephemeral: true});
+                }
+            } catch {
+                // noop
             }
         }
     },

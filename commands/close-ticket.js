@@ -126,7 +126,7 @@ module.exports = {
                         content: `🔒 **Ваш тикет был закрыт.**\nКопия переписки во вложении.`,
                         files: attachment ? [attachment] : [],
                         allowedMentions: allowedMentionsNone()
-                    }).catch(e => console.log("Could not DM user transcript:", e.message));
+                    }).catch(() => null);
                 }
             } catch (e) {
                 console.error("DM Transcript error:", e);

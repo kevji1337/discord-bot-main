@@ -26,13 +26,19 @@ module.exports = {
         console.log(`🤖 Бот запущен как ${client.user.tag}`);
         await runStartupSelfCheck(client);
 
+        if (client.__ticketAutoCloseInterval) {
+            clearInterval(client.__ticketAutoCloseInterval);
+        }
+
         // AUTO-CLOSE LOOP (Runs every 1 hour)
         const interval = setInterval(async () => {
             if (autoCloseInFlight) return;
             autoCloseInFlight = true;
-            console.log("🔄 Running Auto-Close Check...");
             try {
                 const tickets = getTicketsMeta();
+                const ticketIds = Object.keys(tickets);
+                if (!ticketIds.length) return;
+                console.log(`🔄 Running Auto-Close Check for ${ticketIds.length} tracked ticket(s)...`);
                 const now = Date.now();
                 const ONE_DAY = 24 * 60 * 60 * 1000;
                 const TWO_DAYS = 48 * 60 * 60 * 1000;
@@ -157,5 +163,6 @@ module.exports = {
             }
         }, 60 * 60 * 1000); // 1 hour
         interval.unref?.();
+        client.__ticketAutoCloseInterval = interval;
     },
 };

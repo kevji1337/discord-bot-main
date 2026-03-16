@@ -139,6 +139,24 @@ function isAdmin(member) {
     return Boolean(member?.permissions?.has?.(PermissionFlagsBits.Administrator));
 }
 
+async function resolveOverwriteTarget(guild, targetId) {
+    const id = String(targetId ?? '').trim();
+    if (!/^\d{17,20}$/.test(id)) return null;
+
+    return guild?.members?.cache?.get(id)
+        || guild?.roles?.cache?.get(id)
+        || await guild?.members?.fetch?.(id).catch(() => null)
+        || await guild?.roles?.fetch?.(id).catch(() => null)
+        || null;
+}
+
+async function editOverwriteSafe(channel, guild, targetId, permissions) {
+    const target = await resolveOverwriteTarget(guild, targetId);
+    if (!target) return false;
+    await channel.permissionOverwrites.edit(target, permissions);
+    return true;
+}
+
 async function collectMessages(channel, opts = {}) {
     // Защита от rate-limit/памяти на больших тикетах: собираем ограниченный объём.
     const maxMessages = Number.isFinite(opts.maxMessages) ? opts.maxMessages : 2000;
@@ -177,6 +195,8 @@ module.exports = {
     isCurator,
     isMediaManager,
     isAdmin,
+    resolveOverwriteTarget,
+    editOverwriteSafe,
     allowedMentionsNone,
     isTicketChannel,
     parseTicketTopic,
