@@ -1,4 +1,4 @@
-const {SlashCommandBuilder, PermissionFlagsBits} = require('discord.js');
+const {SlashCommandBuilder, PermissionFlagsBits, MessageFlags} = require('discord.js');
 const {getSnippets, addSnippet, removeSnippet} = require('../utils/db');
 const {allowedMentionsNone, isCurator, isAdmin} = require('../utils/helpers');
 
@@ -40,7 +40,7 @@ module.exports = {
 
     async execute(interaction) {
         if (!interaction.member.permissions.has(PermissionFlagsBits.ManageMessages) && !isCurator(interaction.member) && !isAdmin(interaction.member)) {
-            return interaction.reply({content: '❌ Нет прав.', ephemeral: true});
+            return interaction.reply({content: '❌ Нет прав.', flags: MessageFlags.Ephemeral});
         }
 
         const sub = interaction.options.getSubcommand();
@@ -52,38 +52,38 @@ module.exports = {
             const name = normalizeTagName(nameRaw);
             if (!name) return interaction.reply({
                 content: '❌ Некорректное имя тега (до 64 символов).',
-                ephemeral: true
+                flags: MessageFlags.Ephemeral
             });
             try {
                 addSnippet(name, content);
             } catch (e) {
-                return interaction.reply({content: '❌ Не удалось сохранить тег.', ephemeral: true});
+                return interaction.reply({content: '❌ Не удалось сохранить тег.', flags: MessageFlags.Ephemeral});
             }
-            return interaction.reply({content: `✅ Тег **${name}** создан.`, ephemeral: true});
+            return interaction.reply({content: `✅ Тег **${name}** создан.`, flags: MessageFlags.Ephemeral});
         }
 
         if (sub === 'delete') {
             const nameRaw = interaction.options.getString('name');
             const name = normalizeTagName(nameRaw);
-            if (!name) return interaction.reply({content: '❌ Некорректное имя тега.', ephemeral: true});
-            if (!snippets[name]) return interaction.reply({content: '❌ Тег не найден.', ephemeral: true});
+            if (!name) return interaction.reply({content: '❌ Некорректное имя тега.', flags: MessageFlags.Ephemeral});
+            if (!snippets[name]) return interaction.reply({content: '❌ Тег не найден.', flags: MessageFlags.Ephemeral});
             try {
                 removeSnippet(name);
             } catch (e) {
-                return interaction.reply({content: '❌ Не удалось удалить тег.', ephemeral: true});
+                return interaction.reply({content: '❌ Не удалось удалить тег.', flags: MessageFlags.Ephemeral});
             }
-            return interaction.reply({content: `🗑️ Тег **${name}** удален.`, ephemeral: true});
+            return interaction.reply({content: `🗑️ Тег **${name}** удален.`, flags: MessageFlags.Ephemeral});
         }
 
         if (sub === 'list') {
             const list = Object.keys(snippets).map(k => `\`${k}\``).join(', ') || "Нет тегов";
-            return interaction.reply({content: `📂 **Список тегов:**\n${list}`, ephemeral: true});
+            return interaction.reply({content: `📂 **Список тегов:**\n${list}`, flags: MessageFlags.Ephemeral});
         }
 
         if (sub === 'send') {
             const nameRaw = interaction.options.getString('name');
             const name = normalizeTagName(nameRaw);
-            if (!name || !snippets[name]) return interaction.reply({content: '❌ Тег не найден.', ephemeral: true});
+            if (!name || !snippets[name]) return interaction.reply({content: '❌ Тег не найден.', flags: MessageFlags.Ephemeral});
             // Защита от массовых упоминаний (@everyone/@here/ролей) через контент тега.
             return interaction.reply({content: String(snippets[name]), allowedMentions: allowedMentionsNone()});
         }

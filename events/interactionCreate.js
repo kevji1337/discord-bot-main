@@ -10,7 +10,8 @@ const {
     TextInputStyle,
     StringSelectMenuBuilder,
     StringSelectMenuOptionBuilder,
-    PermissionFlagsBits
+    PermissionFlagsBits,
+    MessageFlags
 } = require('discord.js');
 
 const {
@@ -285,9 +286,9 @@ module.exports = {
                     console.error(error);
                     if (interaction.replied || interaction.deferred) await interaction.followUp({
                         content: 'Error!',
-                        ephemeral: true
+                        flags: MessageFlags.Ephemeral
                     });
-                    else await interaction.reply({content: 'Error!', ephemeral: true});
+                    else await interaction.reply({content: 'Error!', flags: MessageFlags.Ephemeral});
                 }
                 return;
             }
@@ -296,7 +297,7 @@ module.exports = {
                 if (interaction.customId === 'ticket_category_select') {
                     const category = interaction.values[0];
                     if (!ALLOWED_TICKET_CATEGORIES.has(category)) {
-                        return interaction.reply({content: '❌ Некорректная категория тикета.', ephemeral: true});
+                        return interaction.reply({content: '❌ Некорректная категория тикета.', flags: MessageFlags.Ephemeral});
                     }
                     const modal = buildCategoryModal(category);
                     await interaction.showModal(modal);
@@ -307,15 +308,15 @@ module.exports = {
             if (interaction.isButton()) {
                 if (interaction.customId === "create_ticket") {
                     if (hitCooldown(createTicketCooldown, interaction.user.id, 3_000)) {
-                        return interaction.reply({content: "⏳ Подождите пару секунд перед повторным созданием тикета.", ephemeral: true});
+                        return interaction.reply({content: "⏳ Подождите пару секунд перед повторным созданием тикета.", flags: MessageFlags.Ephemeral});
                     }
                     if (getBannedUsers().includes(interaction.user.id)) {
-                        return interaction.reply({content: "🚫 Вы заблокированы в системе поддержки.", ephemeral: true});
+                        return interaction.reply({content: "🚫 Вы заблокированы в системе поддержки.", flags: MessageFlags.Ephemeral});
                     }
 
                     const existing = findExistingTicketChannelForUser(interaction.guild, interaction.user.id);
                     if (existing) {
-                        return interaction.reply({content: `❌ У вас уже есть тикет: ${existing}`, ephemeral: true});
+                        return interaction.reply({content: `❌ У вас уже есть тикет: ${existing}`, flags: MessageFlags.Ephemeral});
                     }
 
                     const h = getMskHour();
@@ -345,12 +346,12 @@ module.exports = {
                     return interaction.reply({
                         content: `Пожалуйста, выберите категорию вашего вопроса.${warning}`,
                         components: [new ActionRowBuilder().addComponents(select)],
-                        ephemeral: true
+                        flags: MessageFlags.Ephemeral
                     });
                 }
 
                 if (interaction.customId === "take_ticket") {
-                    await interaction.deferReply({ ephemeral: true });
+                    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
                     const channel = interaction.channel;
                     if (takeTicketInFlight.has(channel.id)) {
@@ -461,7 +462,7 @@ module.exports = {
                 }
 
                 if (interaction.customId === "create_voice") {
-                    await interaction.deferReply({ephemeral: true});
+                    await interaction.deferReply({flags: MessageFlags.Ephemeral});
 
                 if (!isInTicketCategory(interaction.channel)) {
                     return interaction.editReply("❌ Этот канал не находится в категории тикетов.");
@@ -552,34 +553,34 @@ module.exports = {
             if (interaction.customId === "escalate_ticket") {
                 const ticket = getTicketStateFromChannel(interaction.channel);
                 if (!isInTicketCategory(interaction.channel) || !ticket?.ownerId) {
-                    return interaction.reply({content: "❌ Это не активный тикет.", ephemeral: true});
+                    return interaction.reply({content: "❌ Это не активный тикет.", flags: MessageFlags.Ephemeral});
                 }
                 if ((ticket.category === 'moderator' || ticket.category === 'media') && !isCurator(interaction.member)) {
                     return interaction.reply({
                         content: "❌ Для этого типа тикета помощь модераторов не используется.",
-                        ephemeral: true
+                        flags: MessageFlags.Ephemeral
                     });
                 }
                 if (!ticket.takenById) {
-                    return interaction.reply({content: "❌ Сначала возьмите тикет.", ephemeral: true});
+                    return interaction.reply({content: "❌ Сначала возьмите тикет.", flags: MessageFlags.Ephemeral});
                 }
                 if (!isModerator(interaction.member) && !isCurator(interaction.member) && !isAdmin(interaction.member)) {
-                    return interaction.reply({content: "❌ Нет прав.", ephemeral: true});
+                    return interaction.reply({content: "❌ Нет прав.", flags: MessageFlags.Ephemeral});
                 }
                 if (interaction.user.id !== ticket.takenById && !isCurator(interaction.member) && !isAdmin(interaction.member)) {
                     return interaction.reply({
                         content: "❌ Помощь может вызвать только модератор, который взял тикет.",
-                        ephemeral: true
+                        flags: MessageFlags.Ephemeral
                     });
                 }
                 if (ticket.helpOpen) {
-                    return interaction.reply({content: "⚠️ Помощь уже вызвана для этого тикета.", ephemeral: true});
+                    return interaction.reply({content: "⚠️ Помощь уже вызвана для этого тикета.", flags: MessageFlags.Ephemeral});
                 }
                 if (hitCooldown(helpCooldown, interaction.channel.id, 30_000)) {
-                    return interaction.reply({content: "⏳ Нельзя вызывать помощь чаще, чем раз в 30 секунд.", ephemeral: true});
+                    return interaction.reply({content: "⏳ Нельзя вызывать помощь чаще, чем раз в 30 секунд.", flags: MessageFlags.Ephemeral});
                 }
 
-                await interaction.reply({content: "🚨 **Модераторы призваны!**", ephemeral: true});
+                await interaction.reply({content: "🚨 **Модераторы призваны!**", flags: MessageFlags.Ephemeral});
 
                 const channel = interaction.channel;
                 for (const roleId of getSafeModeratorRoleIds(interaction.guild)) {
@@ -654,15 +655,15 @@ module.exports = {
             if (!interaction.customId.startsWith('ticket_modal_')) return;
             const category = interaction.customId.split('_')[2];
             if (!ALLOWED_TICKET_CATEGORIES.has(category)) {
-                return interaction.reply({content: '❌ Некорректная категория тикета.', ephemeral: true});
+                return interaction.reply({content: '❌ Некорректная категория тикета.', flags: MessageFlags.Ephemeral});
             }
             const submitKey = `${interaction.user.id}:${category}`;
             if (ticketSubmitInFlight.has(submitKey)) {
-                return interaction.reply({content: '⏳ Заявка уже обрабатывается, подождите.', ephemeral: true});
+                return interaction.reply({content: '⏳ Заявка уже обрабатывается, подождите.', flags: MessageFlags.Ephemeral});
             }
             ticketSubmitInFlight.add(submitKey);
             try {
-                await interaction.deferReply({ephemeral: true});
+                await interaction.deferReply({flags: MessageFlags.Ephemeral});
 
                 const user = interaction.user;
                 const guild = interaction.guild;
@@ -776,9 +777,9 @@ module.exports = {
             console.error('InteractionCreate error:', error);
             try {
                 if (interaction?.replied || interaction?.deferred) {
-                    await interaction.followUp({content: '❌ Произошла ошибка при обработке interaction.', ephemeral: true});
+                    await interaction.followUp({content: '❌ Произошла ошибка при обработке interaction.', flags: MessageFlags.Ephemeral});
                 } else if (interaction?.isRepliable?.()) {
-                    await interaction.reply({content: '❌ Произошла ошибка при обработке interaction.', ephemeral: true});
+                    await interaction.reply({content: '❌ Произошла ошибка при обработке interaction.', flags: MessageFlags.Ephemeral});
                 }
             } catch {
                 // noop

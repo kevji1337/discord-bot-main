@@ -1,4 +1,4 @@
-const { SlashCommandBuilder } = require("discord.js");
+const { SlashCommandBuilder, MessageFlags } = require("discord.js");
 const {
     isModerator,
     isCurator,
@@ -26,7 +26,7 @@ module.exports = {
         .setName("call-help")
         .setDescription("Вызвать помощь модераторов"),
     async execute(interaction) {
-        await interaction.deferReply({ ephemeral: true });
+        await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
         if (!isModerator(interaction.member) && !isCurator(interaction.member) && !isAdmin(interaction.member))
             return interaction.editReply("❌ Нет прав");

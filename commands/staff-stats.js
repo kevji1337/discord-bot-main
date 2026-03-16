@@ -1,4 +1,4 @@
-const {SlashCommandBuilder, EmbedBuilder, PermissionFlagsBits} = require('discord.js');
+const {SlashCommandBuilder, EmbedBuilder, PermissionFlagsBits, MessageFlags} = require('discord.js');
 const {getStaffStats} = require('../utils/db');
 const {isCurator, isAdmin} = require('../utils/helpers');
 
@@ -9,7 +9,7 @@ module.exports = {
         .setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
     async execute(interaction) {
         if (!interaction.member.permissions.has(PermissionFlagsBits.Administrator) && !isCurator(interaction.member) && !isAdmin(interaction.member)) {
-            return interaction.reply({content: '❌ Нет прав.', ephemeral: true});
+            return interaction.reply({content: '❌ Нет прав.', flags: MessageFlags.Ephemeral});
         }
 
         const stats = getStaffStats();
@@ -31,6 +31,6 @@ module.exports = {
         if (!description) description = "Нет данных.";
 
         embed.setDescription(description);
-        return interaction.reply({embeds: [embed], ephemeral: true});
+        return interaction.reply({embeds: [embed], flags: MessageFlags.Ephemeral});
     }
 };

@@ -1,4 +1,4 @@
-const { SlashCommandBuilder, EmbedBuilder, PermissionFlagsBits } = require('discord.js');
+const { SlashCommandBuilder, EmbedBuilder, PermissionFlagsBits, MessageFlags } = require('discord.js');
 const { getStatuses, updateStatus, setStatusMessage, getStatusMessage } = require('../utils/statusManager');
 const {isCurator, isAdmin} = require('../utils/helpers');
 const STATUS_PANEL_OWNER_ID = String(process.env.STATUS_PANEL_OWNER_ID ?? '').trim();
@@ -83,13 +83,13 @@ module.exports = {
             !isCurator(interaction.member) &&
             !isAdmin(interaction.member)
         ) {
-            return interaction.reply({ content: '❌ У вас нет прав для использования этой команды.', ephemeral: true });
+            return interaction.reply({ content: '❌ У вас нет прав для использования этой команды.', flags: MessageFlags.Ephemeral });
         }
 
         const subcommand = interaction.options.getSubcommand();
 
         if (subcommand === 'panel') {
-            await interaction.deferReply({ ephemeral: true });
+            await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
             const statuses = getStatuses();
             const embed = generateEmbed(statuses);
@@ -102,7 +102,7 @@ module.exports = {
         }
 
         if (subcommand === 'update') {
-            await interaction.deferReply({ ephemeral: true });
+            await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
             const product = interaction.options.getString('product');
             const status = interaction.options.getString('status');

@@ -1,4 +1,4 @@
-const {SlashCommandBuilder, PermissionFlagsBits} = require('discord.js');
+const {SlashCommandBuilder, PermissionFlagsBits, MessageFlags} = require('discord.js');
 const {isCurator, isAdmin} = require('../utils/helpers');
 const {getBannedUsers, banUser, unbanUser} = require('../utils/db');
 
@@ -17,7 +17,7 @@ module.exports = {
         ),
     async execute(interaction) {
         if (!interaction.member.permissions.has(PermissionFlagsBits.BanMembers) && !isCurator(interaction.member) && !isAdmin(interaction.member)) {
-            return interaction.reply({content: '❌ Нет прав.', ephemeral: true});
+            return interaction.reply({content: '❌ Нет прав.', flags: MessageFlags.Ephemeral});
         }
 
         const sub = interaction.options.getSubcommand();
@@ -27,13 +27,13 @@ module.exports = {
             banUser(user.id);
             return interaction.reply({
                 content: `🚫 Пользователь ${user} заблокирован в системе тикетов.`,
-                ephemeral: true
+                flags: MessageFlags.Ephemeral
             });
         }
 
         if (sub === 'remove') {
             unbanUser(user.id);
-            return interaction.reply({content: `✅ Пользователь ${user} разблокирован.`, ephemeral: true});
+            return interaction.reply({content: `✅ Пользователь ${user} разблокирован.`, flags: MessageFlags.Ephemeral});
         }
     }
 };

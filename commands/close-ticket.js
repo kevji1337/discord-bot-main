@@ -4,7 +4,8 @@ const {
     ActionRowBuilder,
     ButtonBuilder,
     ButtonStyle,
-    PermissionFlagsBits
+    PermissionFlagsBits,
+    MessageFlags
 } = require("discord.js");
 const {
     isModerator,
@@ -85,7 +86,7 @@ module.exports = {
         .setName("close-ticket")
         .setDescription("Закрыть тикет"),
     async execute(interaction) {
-        await interaction.deferReply({ ephemeral: true });
+        await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
         if (!isModerator(interaction.member) && !isCurator(interaction.member) && !isAdmin(interaction.member))
             return interaction.editReply("❌ Нет прав");

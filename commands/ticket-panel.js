@@ -1,4 +1,4 @@
-const { SlashCommandBuilder, EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle } = require("discord.js");
+const { SlashCommandBuilder, EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, MessageFlags } = require("discord.js");
 const {isModerator, isCurator, isAdmin} = require("../utils/helpers");
 
 const TICKET_PANEL_OWNER_ID = String(process.env.TICKET_PANEL_OWNER_ID ?? '').trim();
@@ -9,9 +9,9 @@ module.exports = {
         .setDescription("Создать панель тикетов"),
     async execute(interaction) {
         if (interaction.user.id !== TICKET_PANEL_OWNER_ID && !isModerator(interaction.member) && !isCurator(interaction.member) && !isAdmin(interaction.member))
-            return interaction.reply({ content: "❌ Только для модераторов", ephemeral: true }); // Changed to reply since we haven't deferred yet in execute usually, or use deferReply first.
+            return interaction.reply({ content: "❌ Только для модераторов", flags: MessageFlags.Ephemeral }); // Changed to reply since we haven't deferred yet in execute usually, or use deferReply first.
 
-        await interaction.deferReply({ ephemeral: true });
+        await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
         const embed = new EmbedBuilder()
             .setTitle("🎫 Troxill Support")

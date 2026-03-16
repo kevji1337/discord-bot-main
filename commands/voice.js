@@ -1,4 +1,4 @@
-const { SlashCommandBuilder, ChannelType, PermissionFlagsBits } = require('discord.js');
+const { SlashCommandBuilder, ChannelType, PermissionFlagsBits, MessageFlags } = require('discord.js');
 const {
     isModerator,
     isCurator,
@@ -69,28 +69,28 @@ module.exports = {
         .setDescription('Создать или управлять голосовым каналом тикета'),
     async execute(interaction) {
         if (!getTicketChannelState(interaction.channel)) {
-            return interaction.reply({ content: "❌ Эту команду можно использовать только в тикетах.", ephemeral: true });
+            return interaction.reply({ content: "❌ Эту команду можно использовать только в тикетах.", flags: MessageFlags.Ephemeral });
         }
 
         const ticketCategoryId = String(process.env.TICKET_CATEGORY_ID ?? '').trim();
         if (/^\d{17,20}$/.test(ticketCategoryId) && String(interaction.channel.parentId ?? '') !== ticketCategoryId) {
-            return interaction.reply({content: "❌ Этот канал не находится в категории тикетов.", ephemeral: true});
+            return interaction.reply({content: "❌ Этот канал не находится в категории тикетов.", flags: MessageFlags.Ephemeral});
         }
 
         const ticket = getTicketChannelState(interaction.channel);
         const ticketOwnerId = ticket?.ownerId;
         if (!ticketOwnerId) {
-            return interaction.reply({content: "❌ Не удалось определить владельца тикета.", ephemeral: true});
+            return interaction.reply({content: "❌ Не удалось определить владельца тикета.", flags: MessageFlags.Ephemeral});
         }
 
         if (!isModerator(interaction.member) && !isCurator(interaction.member) && !isAdmin(interaction.member)) {
-            return interaction.reply({ content: "❌ Нет прав доступа.", ephemeral: true });
+            return interaction.reply({ content: "❌ Нет прав доступа.", flags: MessageFlags.Ephemeral });
         }
 
         const existing = await findExistingTicketVoiceChannel(interaction.channel, ticketOwnerId);
         if (existing) return interaction.reply({
             content: `⚠️ Голосовой канал для этого тикета уже создан: ${existing}`,
-            ephemeral: true
+            flags: MessageFlags.Ephemeral
         });
 
         const takenById = ticket?.takenById;
@@ -98,14 +98,14 @@ module.exports = {
         const memberIsCurator = isCurator(interaction.member);
         if (!takenById) return interaction.reply({
             content: "❌ Сначала возьмите тикет, затем создайте voice.",
-            ephemeral: true
+            flags: MessageFlags.Ephemeral
         });
         if (interaction.user.id !== takenById && !memberIsAdmin && !memberIsCurator) return interaction.reply({
             content: "❌ Создавать voice может только модератор, который взял тикет.",
-            ephemeral: true
+            flags: MessageFlags.Ephemeral
         });
 
-        await interaction.deferReply({ephemeral: true});
+        await interaction.deferReply({flags: MessageFlags.Ephemeral});
 
         try {
             const lock = await acquireVoiceLock(interaction.channel, interaction.id);

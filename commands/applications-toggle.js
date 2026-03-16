@@ -1,4 +1,4 @@
-const { SlashCommandBuilder, PermissionFlagsBits } = require("discord.js");
+const { SlashCommandBuilder, MessageFlags } = require("discord.js");
 const { setSetting, getSettings } = require("../utils/db");
 const { isCurator, isAdmin } = require("../utils/helpers");
 
@@ -26,7 +26,7 @@ module.exports = {
         ),
     async execute(interaction) {
         if (!isCurator(interaction.member) && !isAdmin(interaction.member)) {
-            return interaction.reply({ content: "❌ У вас недостаточно прав для этой команды.", ephemeral: true });
+            return interaction.reply({ content: "❌ У вас недостаточно прав для этой команды.", flags: MessageFlags.Ephemeral });
         }
 
         const type = interaction.options.getString("type");
@@ -40,7 +40,7 @@ module.exports = {
 
         await interaction.reply({ 
             content: `Статус набора **${typeText}** успешно изменен на **${statusText}**.`, 
-            ephemeral: true 
+            flags: MessageFlags.Ephemeral 
         });
     }
 };
