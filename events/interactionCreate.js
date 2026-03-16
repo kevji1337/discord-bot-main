@@ -485,6 +485,13 @@ module.exports = {
                             SendMessages: false
                         });
                     }
+                    if (/^\d{17,20}$/.test(CURATOR_ROLE_ID)) {
+                        await editOverwriteSafe(channel, interaction.guild, CURATOR_ROLE_ID, {
+                            ViewChannel: true,
+                            ReadMessageHistory: true,
+                            SendMessages: true
+                        });
+                    }
                     if (ticketCategory === 'media' && /^\d{17,20}$/.test(MEDIA_MANAGER_ROLE_ID)) {
                         await editOverwriteSafe(channel, interaction.guild, MEDIA_MANAGER_ROLE_ID, {
                             ViewChannel: true,
@@ -780,10 +787,6 @@ module.exports = {
                     });
                     pingRoleIds = [MEDIA_MANAGER_ROLE_ID];
                 } else if (category === 'moderator') {
-                    permissionOverwrites.push({
-                        id: CURATOR_ROLE_ID,
-                        allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.ReadMessageHistory]
-                    });
                     pingRoleIds = [CURATOR_ROLE_ID];
                 } else {
                     permissionOverwrites.push(...uniqSnowflakes(modRoleIds).map(id => ({

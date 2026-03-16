@@ -3,7 +3,8 @@ const {
     isCurator,
     isAdmin,
     buildTicketTopic,
-    getTicketChannelState
+    getTicketChannelState,
+    editOverwriteSafe
 } = require('../utils/helpers');
 const {
     getTicketState,
@@ -14,6 +15,7 @@ const {
 } = require('../utils/db');
 
 const ALLOWED_TICKET_CATEGORIES = new Set(['tech', 'question', 'moderator', 'media']);
+const CURATOR_ROLE_ID = String(process.env.CURATOR_ROLE_ID ?? '').trim();
 
 function inferCategoryFromMessage(message) {
     const embedTitles = (message?.embeds ?? [])
@@ -61,6 +63,18 @@ async function getLatestActivityTimestamp(channel) {
     const latest = await channel.messages.fetch({limit: 1}).catch(() => null);
     const message = latest?.first?.();
     return message?.createdTimestamp || Date.now();
+}
+
+function curatorOverwriteNeedsRepair(channel) {
+    if (!/^\d{17,20}$/.test(CURATOR_ROLE_ID)) return false;
+    const overwrite = channel.permissionOverwrites.cache.get(CURATOR_ROLE_ID);
+    if (!overwrite) return true;
+
+    return !overwrite.allow.has(PermissionFlagsBits.ViewChannel)
+        || !overwrite.allow.has(PermissionFlagsBits.SendMessages)
+        || !overwrite.allow.has(PermissionFlagsBits.ReadMessageHistory)
+        || overwrite.deny.has(PermissionFlagsBits.ViewChannel)
+        || overwrite.deny.has(PermissionFlagsBits.SendMessages);
 }
 
 module.exports = {
@@ -165,6 +179,19 @@ module.exports = {
                 if (existingMetaTimestamp !== latestActivity) {
                     setTicketActivity(channel.id, latestActivity);
                     touched = true;
+                }
+
+                if (curatorOverwriteNeedsRepair(channel)) {
+                    const curatorAccessPatched = await editOverwriteSafe(channel, interaction.guild, CURATOR_ROLE_ID, {
+                        ViewChannel: true,
+                        SendMessages: true,
+                        ReadMessageHistory: true
+                    });
+                    if (curatorAccessPatched) {
+                        touched = true;
+                    } else {
+                        if (notes.length < 8) notes.push(`- ${channel}: не удалось обновить права куратора`);
+                    }
                 }
 
                 if (touched) {
