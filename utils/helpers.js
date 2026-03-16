@@ -27,7 +27,8 @@ function safeRoleIdsForGuild(roleIds, guild) {
 }
 
 function getSafeModeratorRoleIds(guild) {
-    return safeRoleIdsForGuild(MODERATOR_ROLE_IDS, guild);
+    const curatorId = String(CURATOR_ROLE_ID ?? '').trim();
+    return safeRoleIdsForGuild(MODERATOR_ROLE_IDS, guild).filter(id => id !== curatorId);
 }
 
 function getSafePingRoleIds(guild) {

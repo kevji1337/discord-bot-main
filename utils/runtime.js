@@ -205,6 +205,12 @@ async function runStartupSelfCheck(client) {
         }
     }
 
+    const curatorRoleId = normalizeEnvValue(process.env.CURATOR_ROLE_ID);
+    const moderatorRoleIds = parseSnowflakeList(process.env.MODERATOR_ROLE_IDS);
+    if (curatorRoleId && moderatorRoleIds.includes(curatorRoleId)) {
+        console.warn('⚠️ CURATOR_ROLE_ID is also present in MODERATOR_ROLE_IDS. Curator is now excluded from generic moderator ACL automatically.');
+    }
+
     const userChecks = [
         normalizeEnvValue(process.env.TICKET_PANEL_OWNER_ID),
         normalizeEnvValue(process.env.STATUS_PANEL_OWNER_ID)
