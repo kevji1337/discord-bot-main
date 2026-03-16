@@ -2,6 +2,8 @@ const fs = require('fs');
 const path = require('path');
 
 const DATA_DIR = path.join(__dirname, '../data');
+const jsonCache = new Map();
+const pendingFlushTimers = new Map();
 
 function ensureDir() {
     if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, {recursive: true});
@@ -71,6 +73,58 @@ function atomicWriteFileSync(filePath, content) {
     }
 }
 
+function cloneData(data) {
+    if (data === undefined) return undefined;
+    if (typeof global.structuredClone === 'function') {
+        return global.structuredClone(data);
+    }
+    return JSON.parse(JSON.stringify(data));
+}
+
+function flushPendingFile(filePath) {
+    const timer = pendingFlushTimers.get(filePath);
+    if (timer) {
+        clearTimeout(timer);
+        pendingFlushTimers.delete(filePath);
+    }
+    if (!jsonCache.has(filePath)) return;
+    atomicWriteFileSync(filePath, JSON.stringify(jsonCache.get(filePath), null, 2));
+    cleanupStaleTempFiles(filePath);
+}
+
+function scheduleFlush(filePath, debounceMs) {
+    const existing = pendingFlushTimers.get(filePath);
+    if (existing) clearTimeout(existing);
+    const timer = setTimeout(() => {
+        pendingFlushTimers.delete(filePath);
+        flushPendingFile(filePath);
+    }, debounceMs);
+    timer.unref?.();
+    pendingFlushTimers.set(filePath, timer);
+}
+
+function flushAllPendingJSONWrites() {
+    for (const filePath of [...pendingFlushTimers.keys()]) {
+        flushPendingFile(filePath);
+    }
+}
+
+let flushHooksInstalled = false;
+function installFlushHooks() {
+    if (flushHooksInstalled) return;
+    flushHooksInstalled = true;
+    process.once('beforeExit', flushAllPendingJSONWrites);
+    process.once('exit', flushAllPendingJSONWrites);
+    process.once('SIGINT', () => {
+        flushAllPendingJSONWrites();
+        process.exit(130);
+    });
+    process.once('SIGTERM', () => {
+        flushAllPendingJSONWrites();
+        process.exit(143);
+    });
+}
+
 function normalizeTicketStateRecord(record) {
     if (!record || typeof record !== 'object' || Array.isArray(record)) return null;
 
@@ -98,13 +152,21 @@ function normalizeTicketStateRecord(record) {
 function loadJSON(filename, defaultData = {}) {
     ensureDir();
     const filePath = path.join(DATA_DIR, filename);
+    installFlushHooks();
+    if (jsonCache.has(filePath)) {
+        return cloneData(jsonCache.get(filePath));
+    }
     cleanupStaleTempFiles(filePath);
     if (!fs.existsSync(filePath)) {
-        atomicWriteFileSync(filePath, JSON.stringify(defaultData, null, 2));
-        return defaultData;
+        const initial = cloneData(defaultData);
+        jsonCache.set(filePath, initial);
+        atomicWriteFileSync(filePath, JSON.stringify(initial, null, 2));
+        return cloneData(initial);
     }
     try {
-        return JSON.parse(fs.readFileSync(filePath, 'utf8'));
+        const parsed = JSON.parse(fs.readFileSync(filePath, 'utf8'));
+        jsonCache.set(filePath, parsed);
+        return cloneData(parsed);
     } catch (e) {
         // Бэкапим битый файл, чтобы не терять данные и не зациклиться на ошибке парсинга.
         try {
@@ -112,15 +174,24 @@ function loadJSON(filename, defaultData = {}) {
             fs.copyFileSync(filePath, backupPath);
         } catch { /* noop */
         }
-        return defaultData;
+        const fallback = cloneData(defaultData);
+        jsonCache.set(filePath, fallback);
+        return cloneData(fallback);
     }
 }
 
-function saveJSON(filename, data) {
+function saveJSON(filename, data, opts = {}) {
     ensureDir();
     const filePath = path.join(DATA_DIR, filename);
-    atomicWriteFileSync(filePath, JSON.stringify(data, null, 2));
-    cleanupStaleTempFiles(filePath);
+    installFlushHooks();
+    const snapshot = cloneData(data);
+    jsonCache.set(filePath, snapshot);
+    const debounceMs = Number.isFinite(opts.debounceMs) ? Math.max(0, opts.debounceMs) : 0;
+    if (debounceMs > 0) {
+        scheduleFlush(filePath, debounceMs);
+        return;
+    }
+    flushPendingFile(filePath);
 }
 
 // SPECIFIC MANAGERS
@@ -179,12 +250,12 @@ exports.updateTicketActivity = (channelId) => {
     const data = exports.getTicketsMeta();
     const now = Date.now();
     data[channelId] = now;
-    saveJSON('tickets_meta.json', data);
+    saveJSON('tickets_meta.json', data, {debounceMs: 1000});
 
     const states = exports.getTicketStates();
     if (states[channelId]) {
         states[channelId].lastActive = now;
-        saveJSON('ticket_state.json', states);
+        saveJSON('ticket_state.json', states, {debounceMs: 1000});
     }
 };
 exports.removeTicketMeta = (channelId) => {

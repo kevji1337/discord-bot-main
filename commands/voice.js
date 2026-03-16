@@ -63,6 +63,17 @@ async function acquireVoiceLock(channel, interactionId) {
     return getTicketChannelState(fresh)?.voiceLockId === String(interactionId) ? {ok: true} : {ok: false, reason: 'race'};
 }
 
+async function releaseVoiceLock(channel, interactionId) {
+    const fresh = await channel.fetch().catch(() => channel);
+    const current = getTicketChannelState(fresh);
+    if (!current?.voiceLockId || String(current.voiceLockId) !== String(interactionId) || current.voiceId) return;
+    await fresh.setTopic(buildTicketTopic({
+        ...current,
+        voiceLockId: null
+    })).catch(() => {
+    });
+}
+
 module.exports = {
     data: new SlashCommandBuilder()
         .setName('voice')
@@ -107,6 +118,7 @@ module.exports = {
 
         await interaction.deferReply({flags: MessageFlags.Ephemeral});
 
+        let lockAcquired = false;
         try {
             const lock = await acquireVoiceLock(interaction.channel, interaction.id);
             if (!lock.ok) {
@@ -114,6 +126,7 @@ module.exports = {
                 if (existingAfter) return interaction.editReply(`⚠️ Голосовой канал для этого тикета уже создан: ${existingAfter}`);
                 return interaction.editReply("⏳ Голосовой канал уже создаётся, подождите.");
             }
+            lockAcquired = true;
 
             const modMember = await interaction.guild.members.fetch(takenById).catch(() => null);
             const ownerMember = await interaction.guild.members.fetch(ticketOwnerId).catch(() => null);
@@ -156,6 +169,10 @@ module.exports = {
         } catch (e) {
             console.error(e);
             await interaction.editReply("❌ Ошибка создания канала.");
+        } finally {
+            if (lockAcquired) {
+                await releaseVoiceLock(interaction.channel, interaction.id);
+            }
         }
     }
 };

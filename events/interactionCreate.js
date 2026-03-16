@@ -127,11 +127,14 @@ async function acquireVoiceLock(channel, interactionId) {
     return getTicketChannelState(fresh)?.voiceLockId === String(interactionId) ? {ok: true} : {ok: false, reason: 'race'};
 }
 
-function releaseVoiceLock(channelOrState) {
-    const state = channelOrState?.ownerId ? channelOrState : getTicketChannelState(channelOrState);
-    return buildTicketTopic({
-        ...state,
+async function releaseVoiceLock(channel, interactionId) {
+    const fresh = await channel.fetch().catch(() => channel);
+    const current = getTicketChannelState(fresh);
+    if (!current?.voiceLockId || String(current.voiceLockId) !== String(interactionId) || current.voiceId) return;
+    await fresh.setTopic(buildTicketTopic({
+        ...current,
         voiceLockId: null
+    })).catch(() => {
     });
 }
 
@@ -490,6 +493,7 @@ module.exports = {
                 const botId = interaction.guild.members.me?.id || interaction.client.user.id;
                 const modRoleIds = getSafeModeratorRoleIds(interaction.guild);
                 const curatorRoleIds = uniqSnowflakes([CURATOR_ROLE_ID]);
+                let lockAcquired = false;
 
                 try {
                     const lock = await acquireVoiceLock(interaction.channel, interaction.id);
@@ -498,6 +502,7 @@ module.exports = {
                         if (existingAfter) return interaction.editReply(`⚠️ Голосовой канал для этого тикета уже создан: ${existingAfter}`);
                         return interaction.editReply("⏳ Голосовой канал уже создаётся, подождите.");
                     }
+                    lockAcquired = true;
 
                     const modMember = await interaction.guild.members.fetch(takenById).catch(() => null);
                     const ownerMember = await interaction.guild.members.fetch(ticketOwnerId).catch(() => null);
@@ -546,6 +551,9 @@ module.exports = {
 
                     return interaction.editReply({content: `✅ Голосовой канал создан: ${voice}`});
                 } finally {
+                    if (lockAcquired) {
+                        await releaseVoiceLock(interaction.channel, interaction.id);
+                    }
                     voiceCreateInFlight.delete(interaction.channel.id);
                 }
             }
@@ -583,8 +591,16 @@ module.exports = {
                 await interaction.reply({content: "🚨 **Модераторы призваны!**", flags: MessageFlags.Ephemeral});
 
                 const channel = interaction.channel;
+                const failedRoleIds = [];
                 for (const roleId of getSafeModeratorRoleIds(interaction.guild)) {
-                    await channel.permissionOverwrites.edit(roleId, {ViewChannel: true, SendMessages: true});
+                    const ok = await editOverwriteSafe(channel, interaction.guild, roleId, {
+                        ViewChannel: true,
+                        SendMessages: true
+                    });
+                    if (!ok) failedRoleIds.push(roleId);
+                }
+                if (failedRoleIds.length) {
+                    console.warn(`Failed to open help access for role IDs: ${failedRoleIds.join(', ')}`);
                 }
                 await channel.setTopic(buildTicketTopic({
                     ...ticket,

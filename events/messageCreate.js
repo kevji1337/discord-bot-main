@@ -1,7 +1,7 @@
 const {Events} = require('discord.js');
 const {updateTicketActivity} = require('../utils/db');
 const {
-    isTicketChannel,
+    isInTicketCategory,
     allowedMentionsNone,
     isCurator,
     isAdmin,
@@ -24,9 +24,9 @@ module.exports = {
         if (message.author.bot) return;
 
         // Надёжность авто-закрытия: активность считаем по реальным сообщениям в тикетах.
-        if (isTicketChannel(message.channel)) {
-            const ticket = getTicketChannelState(message.channel);
-            if (!ticket?.ownerId) return;
+        const ticket = getTicketChannelState(message.channel);
+        if (ticket?.ownerId) {
+            if (isInTicketCategory(message.channel) === false) return;
             const ticketNotTaken = !ticket?.takenById;
             const memberCanBypassPreTakeLock = isCurator(message.member) || isAdmin(message.member);
             const isTicketOwner = ticket.ownerId === message.author.id;

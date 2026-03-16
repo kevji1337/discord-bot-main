@@ -32,8 +32,6 @@ module.exports = {
             return interaction.editReply("❌ Нет прав");
 
         const channel = interaction.channel;
-        if (!channel.name.startsWith("ticket-"))
-            return interaction.editReply("❌ Это не тикет");
         if (!isInTicketCategory(channel))
             return interaction.editReply("❌ Этот канал не находится в категории тикетов.");
 

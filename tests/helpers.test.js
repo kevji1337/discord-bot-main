@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { buildTicketTopic, parseTicketTopic } = require('../utils/helpers');
+const { buildTicketTopic, parseTicketTopic, getTicketChannelState } = require('../utils/helpers');
 
 test('buildTicketTopic emits stable ticket metadata tokens', () => {
     const topic = buildTicketTopic({
@@ -34,4 +34,25 @@ test('parseTicketTopic ignores invalid category tokens', () => {
     const state = parseTicketTopic('OWNER:123456789012345678 | CATEGORY:invalid');
     assert.equal(state.ownerId, '123456789012345678');
     assert.equal(state.category, null);
+});
+
+test('getTicketChannelState reconstructs state from topic tokens', () => {
+    const state = getTicketChannelState({
+        id: '523456789012345678',
+        guildId: '623456789012345678',
+        topic: 'OWNER:123456789012345678 | CATEGORY:question | TAKEN_BY:223456789012345678 | HELP_OPEN:1'
+    });
+
+    assert.deepEqual(state, {
+        ownerId: '123456789012345678',
+        category: 'question',
+        takenById: '223456789012345678',
+        createdAt: null,
+        takenAt: null,
+        lastActive: null,
+        guildId: '623456789012345678',
+        voiceId: null,
+        voiceLockId: null,
+        helpOpen: true
+    });
 });

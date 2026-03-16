@@ -82,8 +82,9 @@ function buildTicketTopic(state = {}) {
 }
 
 function getTicketChannelState(channel) {
-    const stored = getTicketState(channel?.id);
     const fromTopic = parseTicketTopic(channel);
+    const needsStoredState = !fromTopic.ownerId || !fromTopic.category;
+    const stored = needsStoredState ? getTicketState(channel?.id) : null;
     const ownerId = stored?.ownerId || fromTopic.ownerId;
     if (!ownerId) return null;
 
