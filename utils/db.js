@@ -258,6 +258,21 @@ exports.updateTicketActivity = (channelId) => {
         saveJSON('ticket_state.json', states, {debounceMs: 1000});
     }
 };
+exports.setTicketActivity = (channelId, timestamp) => {
+    const key = String(channelId ?? '').trim();
+    if (!isSnowflake(key)) throw new Error('Invalid channelId');
+    const when = Number.isFinite(timestamp) ? Math.max(0, Number(timestamp)) : Date.now();
+
+    const data = exports.getTicketsMeta();
+    data[key] = when;
+    saveJSON('tickets_meta.json', data, {debounceMs: 1000});
+
+    const states = exports.getTicketStates();
+    if (states[key]) {
+        states[key].lastActive = when;
+        saveJSON('ticket_state.json', states, {debounceMs: 1000});
+    }
+};
 exports.removeTicketMeta = (channelId) => {
     const data = exports.getTicketsMeta();
     delete data[channelId];
