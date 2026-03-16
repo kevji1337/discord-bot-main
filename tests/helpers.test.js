@@ -56,3 +56,35 @@ test('getTicketChannelState reconstructs state from topic tokens', () => {
         helpOpen: true
     });
 });
+
+test('getTicketChannelState falls back to legacy ticket channel name', () => {
+    const state = getTicketChannelState({
+        id: '723456789012345678',
+        guildId: '623456789012345678',
+        name: 'ticket-123456789012345678',
+        topic: ''
+    });
+
+    assert.equal(state.ownerId, '123456789012345678');
+    assert.equal(state.category, null);
+});
+
+test('getTicketChannelState can recover owner from legacy embed field', () => {
+    const state = getTicketChannelState({
+        id: '823456789012345678',
+        guildId: '623456789012345678',
+        name: 'legacy-ticket',
+        topic: ''
+    }, {
+        message: {
+            embeds: [{
+                fields: [{
+                    name: 'Пользователь',
+                    value: '<@923456789012345678> (legacyuser)'
+                }]
+            }]
+        }
+    });
+
+    assert.equal(state.ownerId, '923456789012345678');
+});

@@ -81,11 +81,66 @@ function buildTicketTopic(state = {}) {
     return tokens.join(' | ');
 }
 
-function getTicketChannelState(channel) {
+function extractSnowflakeFromText(value) {
+    const text = String(value ?? '');
+    return text.match(/<@!?(\d{17,20})>/)?.[1]
+        || text.match(/\b(\d{17,20})\b/)?.[1]
+        || null;
+}
+
+function getLegacyOwnerIdFromChannelName(channel) {
+    return String(channel?.name ?? '').match(/^ticket-(\d{17,20})$/)?.[1] || null;
+}
+
+function getLegacyOwnerIdFromMessage(message) {
+    for (const embed of message?.embeds ?? []) {
+        for (const field of embed?.fields ?? []) {
+            if (!/пользователь/i.test(String(field?.name ?? ''))) continue;
+            const id = extractSnowflakeFromText(field?.value);
+            if (id) return id;
+        }
+    }
+    return null;
+}
+
+function getLegacyOwnerIdFromOverwrites(channel) {
+    const guild = channel?.guild;
+    const guildId = String(guild?.id ?? '').trim();
+    const botId = String(guild?.members?.me?.id || channel?.client?.user?.id || '').trim();
+    const reservedIds = new Set([
+        guildId,
+        botId,
+        String(CURATOR_ROLE_ID ?? '').trim(),
+        String(MEDIA_MANAGER_ROLE_ID ?? '').trim(),
+        ...getSafeModeratorRoleIds(guild),
+        ...getSafePingRoleIds(guild),
+        ...getTicketViewRoleIds(guild)
+    ].filter(id => /^\d{17,20}$/.test(id)));
+
+    const memberOverwriteIds = [];
+    for (const overwrite of channel?.permissionOverwrites?.cache?.values?.() ?? []) {
+        const type = overwrite?.type;
+        const isMemberOverwrite = type === 1 || type === 'member';
+        if (!isMemberOverwrite) continue;
+
+        const id = String(overwrite?.id ?? '').trim();
+        if (!/^\d{17,20}$/.test(id) || reservedIds.has(id)) continue;
+        memberOverwriteIds.push(id);
+    }
+
+    return memberOverwriteIds.length === 1 ? memberOverwriteIds[0] : null;
+}
+
+function getTicketChannelState(channel, options = {}) {
     const fromTopic = parseTicketTopic(channel);
-    const needsStoredState = !fromTopic.ownerId || !fromTopic.category;
+    const legacyOwnerId = fromTopic.ownerId
+        ? null
+        : getLegacyOwnerIdFromChannelName(channel)
+            || getLegacyOwnerIdFromMessage(options.message)
+            || getLegacyOwnerIdFromOverwrites(channel);
+    const needsStoredState = !fromTopic.category || (!fromTopic.ownerId && !legacyOwnerId);
     const stored = needsStoredState ? getTicketState(channel?.id) : null;
-    const ownerId = stored?.ownerId || fromTopic.ownerId;
+    const ownerId = stored?.ownerId || fromTopic.ownerId || legacyOwnerId;
     if (!ownerId) return null;
 
     return {

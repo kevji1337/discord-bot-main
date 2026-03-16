@@ -26,7 +26,8 @@ const {
     allowedMentionsNone,
     isTicketChannel,
     buildTicketTopic,
-    getTicketChannelState
+    getTicketChannelState,
+    parseTicketTopic
 } = require('../utils/helpers');
 
 const {
@@ -34,6 +35,7 @@ const {
     updateTicketActivity,
     createTicketState,
     getTicketState,
+    updateTicketState,
     setTicketTakenBy,
     hasTicketFeedback,
     setTicketFeedback,
@@ -182,8 +184,57 @@ function buildCategoryModal(category) {
     return modal;
 }
 
-function getTicketStateFromChannel(channel) {
-    return getTicketChannelState(channel);
+function getTicketStateFromChannel(channel, message) {
+    return getTicketChannelState(channel, {message});
+}
+
+async function backfillLegacyTicketMetadata(channel, ticket, category, guildId) {
+    if (!ticket?.ownerId) return ticket;
+
+    const topicState = parseTicketTopic(channel);
+    const nextCategory = ticket.category || category || 'question';
+    const repaired = {
+        ...ticket,
+        ownerId: ticket.ownerId,
+        category: nextCategory
+    };
+
+    if (!topicState.ownerId || !topicState.category) {
+        await channel.setTopic(buildTicketTopic({
+            ...repaired,
+            helpOpen: ticket.helpOpen,
+            voiceId: ticket.voiceId,
+            voiceLockId: ticket.voiceLockId
+        })).catch(() => {
+        });
+    }
+
+    const existingState = getTicketState(channel.id);
+    if (existingState) {
+        try {
+            updateTicketState(channel.id, {
+                ownerId: repaired.ownerId,
+                category: nextCategory,
+                guildId: guildId || existingState.guildId || null
+            });
+        } catch {
+            // noop
+        }
+    } else {
+        try {
+            createTicketState(channel.id, {
+                ownerId: repaired.ownerId,
+                category: nextCategory,
+                createdAt: Date.now(),
+                lastActive: Date.now(),
+                guildId: guildId || null
+            });
+        } catch {
+            // noop
+        }
+    }
+
+    return repaired;
 }
 
 function inferTicketCategory(ticket, message) {
@@ -362,12 +413,13 @@ module.exports = {
                     }
                     takeTicketInFlight.add(channel.id);
                     try {
-                    const ticket = getTicketStateFromChannel(channel);
+                    let ticket = getTicketStateFromChannel(channel, interaction.message);
                     if (!ticket?.ownerId) return interaction.editReply("❌ Не удалось определить владельца тикета.");
 
                     if (!isInTicketCategory(channel)) return interaction.editReply("❌ Этот канал не находится в категории тикетов.");
 
                     const ticketCategory = inferTicketCategory(ticket, interaction.message);
+                    ticket = await backfillLegacyTicketMetadata(channel, ticket, ticketCategory, interaction.guild.id);
                     if (!canTakeTicket(interaction.member, ticketCategory)) {
                         if (ticketCategory === 'moderator') return interaction.editReply("❌ Только для Кураторов");
                         if (ticketCategory === 'media') return interaction.editReply("❌ Только для Медиа-менеджеров");
