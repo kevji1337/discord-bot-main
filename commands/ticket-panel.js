@@ -1,7 +1,7 @@
-const { SlashCommandBuilder, PermissionFlagsBits, EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle } = require("discord.js");
+const { SlashCommandBuilder, EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle } = require("discord.js");
 const {isModerator, isCurator, isAdmin} = require("../utils/helpers");
 
-const TICKET_PANEL_OWNER_ID = String(process.env.TICKET_PANEL_OWNER_ID ?? '1259720749820940348').trim();
+const TICKET_PANEL_OWNER_ID = String(process.env.TICKET_PANEL_OWNER_ID ?? '').trim();
 
 module.exports = {
     data: new SlashCommandBuilder()

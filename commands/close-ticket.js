@@ -12,9 +12,9 @@ const {
     isAdmin,
     collectMessages,
     allowedMentionsNone,
-    ticketOwnerIdFromChannel
+    getTicketChannelState
 } = require("../utils/helpers");
-const {removeTicketMeta, removeTicketState, getTicketState, addStaffAction} = require("../utils/db");
+const {removeTicketMeta, removeTicketState, addStaffAction} = require("../utils/db");
 const discordTranscripts = require('discord-html-transcripts');
 const { GOOGLE_DRIVE_WEBAPP_URL, LOG_CHANNEL_ID } = process.env;
 
@@ -33,6 +33,14 @@ function shouldSaveTranscriptImages() {
 
 function isExternalExportEnabled() {
     return String(process.env.ENABLE_EXTERNAL_TICKET_EXPORT ?? '').trim().toLowerCase() === 'true';
+}
+
+function shouldDmTicketTranscript() {
+    return String(process.env.DM_TICKET_TRANSCRIPTS ?? '').trim().toLowerCase() === 'true';
+}
+
+function shouldSendFeedbackDm() {
+    return String(process.env.DM_TICKET_FEEDBACK ?? 'true').trim().toLowerCase() !== 'false';
 }
 
 function buildFeedbackRow(ticketId, staffId) {
@@ -83,7 +91,8 @@ module.exports = {
             return interaction.editReply("❌ Нет прав");
 
         const channel = interaction.channel;
-        if (!channel.name.startsWith("ticket-"))
+        const ticket = getTicketChannelState(channel);
+        if (!ticket?.ownerId)
             return interaction.editReply("❌ Это не тикет");
 
         // Защита от удаления "чужих" каналов при переименовании: если категория тикетов настроена — требуем совпадение.
@@ -92,8 +101,7 @@ module.exports = {
             return interaction.editReply("❌ Этот канал не находится в категории тикетов. Закрытие отменено.");
         }
 
-        const ticket = getTicketState(channel.id);
-        const ticketOwnerId = ticket?.ownerId || ticketOwnerIdFromChannel(channel) || channel.name.replace("ticket-", "");
+        const ticketOwnerId = ticket.ownerId;
 
         // 1. Generate Transcript
         let attachment = null;
@@ -110,30 +118,25 @@ module.exports = {
             console.error("Transcript error:", e?.message || e);
         }
 
-        // 2. DM User with Transcript (Feature 9)
-        try {
-            const ticketOwner = await channel.guild.members.fetch(ticketOwnerId).catch(() => null);
-            if (ticketOwner) {
-                await ticketOwner.send({
-                    content: `🔒 **Ваш тикет был закрыт.**\nКопия переписки во вложении.`,
-                    files: attachment ? [attachment] : []
-                }).catch(e => console.log("Could not DM user transcript:", e.message));
-
-                // Reuse Feedback Logic here?
-                // The original code had feedback logic below. merging workflow.
-                // Original: interaction.client.users.cache.get(...) -> Send feedback buttons
-                // We can combine: Send Transcript AND Feedback in one or separate messages.
-                // Original code logic below does specific feedback sending.
-                // I will leave original feedback logic alone, but ensure attachment is sent.
-                // Ideally send attachment first, then feedback.
+        if (shouldDmTicketTranscript()) {
+            try {
+                const ticketOwner = await channel.guild.members.fetch(ticketOwnerId).catch(() => null);
+                if (ticketOwner) {
+                    await ticketOwner.send({
+                        content: `🔒 **Ваш тикет был закрыт.**\nКопия переписки во вложении.`,
+                        files: attachment ? [attachment] : [],
+                        allowedMentions: allowedMentionsNone()
+                    }).catch(e => console.log("Could not DM user transcript:", e.message));
+                }
+            } catch (e) {
+                console.error("DM Transcript error:", e);
             }
-        } catch (e) {
-            console.error("DM Transcript error:", e);
         }
 
         // 3. Log to Discord (Log Channel)
-        const logChannel = interaction.guild.channels.cache.get(LOG_CHANNEL_ID) ||
-            interaction.guild.channels.cache.find(c => c.name === "ticket-logs");
+        const logChannel = LOG_CHANNEL_ID
+            ? await interaction.guild.channels.fetch(LOG_CHANNEL_ID).catch(() => null)
+            : null;
 
         if (logChannel) {
             const logEmbed = new EmbedBuilder()
@@ -152,7 +155,7 @@ module.exports = {
                 allowedMentions: allowedMentionsNone()
             });
         } else {
-            console.error("❌ Log channel not found (set LOG_CHANNEL_ID or create #ticket-logs)");
+            console.warn("⚠️ Ticket close log skipped: LOG_CHANNEL_ID is missing or invalid.");
         }
 
         // 3. Google Drive (Legacy/Backup)
@@ -178,7 +181,7 @@ module.exports = {
 
         // 4. Feedback Request (DM)
         const userId = ticketOwnerId;
-        if (userId) try {
+        if (userId && shouldSendFeedbackDm()) try {
             const user = await interaction.guild.members.fetch(userId);
             if (user) {
                 const feedbackEmbed = new EmbedBuilder()
@@ -198,16 +201,15 @@ module.exports = {
             console.log("Could not DM user for feedback");
         }
 
-        await interaction.editReply("✅ Тикет закрыт, лог сохранен, отзыв запрошен.");
+        await interaction.editReply("✅ Тикет закрыт.");
         // 4. Delete Linked Voice Channel(s)
         const voiceMatch = channel.topic?.match(/VOICE:(\d{17,20})/);
         try {
             const catId = String(process.env.TICKET_CATEGORY_ID ?? '').trim();
-            const expectedName = `Voice-${ticketOwnerId}`;
             const voices = [];
 
-            if (voiceMatch) {
-                const v = await channel.guild.channels.fetch(voiceMatch[1]).catch(() => null);
+            if (ticket.voiceId || voiceMatch) {
+                const v = await channel.guild.channels.fetch(ticket.voiceId || voiceMatch[1]).catch(() => null);
                 if (v) voices.push(v);
             }
 
@@ -216,10 +218,7 @@ module.exports = {
                     c &&
                     c.type === 2 &&
                     String(c.parentId ?? '') === catId &&
-                    (
-                        c.name === expectedName ||
-                        c.permissionOverwrites?.cache?.get(ticketOwnerId)?.allow?.has(PermissionFlagsBits.ViewChannel)
-                    )
+                    c.permissionOverwrites?.cache?.get(ticketOwnerId)?.allow?.has(PermissionFlagsBits.ViewChannel)
                 ) {
                     voices.push(c);
                 }

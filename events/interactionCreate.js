@@ -16,13 +16,15 @@ const {
 const {
     isModerator,
     isCurator,
+    isMediaManager,
     isAdmin,
     getSafeModeratorRoleIds,
     getSafePingRoleIds,
     getTicketViewRoleIds,
     allowedMentionsNone,
     isTicketChannel,
-    ticketOwnerIdFromChannel
+    buildTicketTopic,
+    getTicketChannelState
 } = require('../utils/helpers');
 
 const {
@@ -39,12 +41,16 @@ const {
 
 const {TICKET_CATEGORY_ID, LOG_CHANNEL_ID} = process.env;
 
-const CURATOR_ROLE_ID = String(process.env.CURATOR_ROLE_ID ?? '1469094304789037249').trim();
-const MEDIA_MANAGER_ROLE_ID = String(process.env.MEDIA_MANAGER_ROLE_ID ?? '1469094131920797811').trim();
+const CURATOR_ROLE_ID = String(process.env.CURATOR_ROLE_ID ?? '').trim();
+const MEDIA_MANAGER_ROLE_ID = String(process.env.MEDIA_MANAGER_ROLE_ID ?? '').trim();
 const ALLOWED_TICKET_CATEGORIES = new Set(['tech', 'question', 'moderator', 'media']);
 
 const voiceCreateCooldown = new Map();
 const voiceCreateInFlight = new Set();
+const createTicketCooldown = new Map();
+const takeTicketInFlight = new Set();
+const ticketSubmitInFlight = new Set();
+const helpCooldown = new Map();
 
 function uniqSnowflakes(ids) {
     return [...new Set((ids || []).map(s => String(s).trim()).filter(Boolean).filter(s => /^\d{17,20}$/.test(s)))];
@@ -68,9 +74,9 @@ function isWorkingHours() {
 
 async function findExistingTicketVoiceChannel(channel, ticketOwnerId) {
     const catId = String(TICKET_CATEGORY_ID ?? '').trim();
-    const topicVoiceMatch = channel.topic?.match(/VOICE:(\d{17,20})/);
-    if (topicVoiceMatch) {
-        const v = await channel.guild.channels.fetch(topicVoiceMatch[1]).catch(() => null);
+    const topicState = getTicketChannelState(channel);
+    if (topicState?.voiceId) {
+        const v = await channel.guild.channels.fetch(topicState.voiceId).catch(() => null);
         if (v && v.type === ChannelType.GuildVoice) return v;
     }
 
@@ -107,22 +113,32 @@ function buildVoiceName(moderatorName, ownerName) {
 }
 
 async function acquireVoiceLock(channel, interactionId) {
-    const topic = String(channel.topic ?? '');
-    if (topic.includes('VOICE:')) return {ok: false, reason: 'exists'};
-    if (topic.includes('VOICE_LOCK:')) return {ok: false, reason: 'locked'};
-    const next = `${topic} | VOICE_LOCK:${interactionId}`.trim();
-    await channel.setTopic(next).catch(() => {
+    const current = getTicketChannelState(channel);
+    if (current?.voiceId) return {ok: false, reason: 'exists'};
+    if (current?.voiceLockId) return {ok: false, reason: 'locked'};
+    await channel.setTopic(buildTicketTopic({
+        ...current,
+        voiceLockId: interactionId
+    })).catch(() => {
     });
     const fresh = await channel.fetch().catch(() => channel);
-    const freshTopic = String(fresh.topic ?? '');
-    return freshTopic.includes(`VOICE_LOCK:${interactionId}`) ? {ok: true} : {ok: false, reason: 'race'};
+    return getTicketChannelState(fresh)?.voiceLockId === String(interactionId) ? {ok: true} : {ok: false, reason: 'race'};
 }
 
-function releaseVoiceLock(topic) {
-    return String(topic ?? '')
-        .replace(/\s*\|\s*VOICE_LOCK:\d{17,20}\s*/g, ' ')
-        .replace(/\s{2,}/g, ' ')
-        .trim();
+function releaseVoiceLock(channelOrState) {
+    const state = channelOrState?.ownerId ? channelOrState : getTicketChannelState(channelOrState);
+    return buildTicketTopic({
+        ...state,
+        voiceLockId: null
+    });
+}
+
+function hitCooldown(map, key, ms) {
+    const now = Date.now();
+    const last = map.get(key) || 0;
+    if (now - last < ms) return true;
+    map.set(key, now);
+    return false;
 }
 
 function buildCategoryModal(category) {
@@ -162,22 +178,7 @@ function buildCategoryModal(category) {
 }
 
 function getTicketStateFromChannel(channel) {
-    const fromDb = getTicketState(channel?.id);
-    if (fromDb) return fromDb;
-
-    const ownerId = ticketOwnerIdFromChannel(channel);
-    if (!ownerId) return null;
-
-    const takenMatch = channel?.topic?.match(/TAKEN_BY:(\d{17,20})/);
-    return {
-        ownerId,
-        category: null,
-        takenById: takenMatch ? takenMatch[1] : null,
-        createdAt: null,
-        takenAt: null,
-        lastActive: null,
-        guildId: channel?.guildId ? String(channel.guildId) : null
-    };
+    return getTicketChannelState(channel);
 }
 
 function inferTicketCategory(ticket, message) {
@@ -194,10 +195,10 @@ function inferTicketCategory(ticket, message) {
 function canTakeTicket(member, category) {
     if (isCurator(member) || isAdmin(member)) return true;
     if (category === 'moderator') {
-        return member?.roles?.cache?.has?.(CURATOR_ROLE_ID) || isAdmin(member);
+        return isCurator(member) || isAdmin(member);
     }
     if (category === 'media') {
-        return member?.roles?.cache?.has?.(MEDIA_MANAGER_ROLE_ID) || isAdmin(member);
+        return isMediaManager(member) || isAdmin(member);
     }
     return isModerator(member) || isAdmin(member);
 }
@@ -205,8 +206,7 @@ function canTakeTicket(member, category) {
 function findExistingTicketChannelForUser(guild, userId) {
     return guild?.channels?.cache?.find(channel => {
         if (!channel) return false;
-        if (channel.name === `ticket-${userId}`) return true;
-        return getTicketState(channel.id)?.ownerId === userId;
+        return getTicketChannelState(channel)?.ownerId === userId;
     }) || null;
 }
 
@@ -304,6 +304,9 @@ module.exports = {
 
         if (interaction.isButton()) {
             if (interaction.customId === "create_ticket") {
+                if (hitCooldown(createTicketCooldown, interaction.user.id, 3_000)) {
+                    return interaction.reply({content: "⏳ Подождите пару секунд перед повторным созданием тикета.", ephemeral: true});
+                }
                 if (getBannedUsers().includes(interaction.user.id)) {
                     return interaction.reply({content: "🚫 Вы заблокированы в системе поддержки.", ephemeral: true});
                 }
@@ -348,6 +351,11 @@ module.exports = {
                 await interaction.deferReply({ ephemeral: true });
 
                 const channel = interaction.channel;
+                if (takeTicketInFlight.has(channel.id)) {
+                    return interaction.editReply("⏳ Тикет уже берётся другим модератором, подождите.");
+                }
+                takeTicketInFlight.add(channel.id);
+                try {
                 const ticket = getTicketStateFromChannel(channel);
                 if (!ticket?.ownerId) return interaction.editReply("❌ Не удалось определить владельца тикета.");
 
@@ -360,16 +368,17 @@ module.exports = {
                     return interaction.editReply("❌ Только модератор");
                 }
 
-                if (ticket.takenById || (channel.topic && channel.topic.startsWith("TAKEN_BY:"))) {
+                if (ticket.takenById) {
                     return interaction.editReply("❌ Тикет уже занят.");
                 }
 
-                let newTopic = `TAKEN_BY:${interaction.user.id}`;
-                if (channel.topic && channel.topic.includes("VOICE:")) {
-                    const voiceMatch = channel.topic.match(/VOICE:\d{17,20}/);
-                    if (voiceMatch) newTopic += ` | ${voiceMatch[0]}`;
-                }
-                await channel.setTopic(newTopic);
+                await channel.setTopic(buildTicketTopic({
+                    ...ticket,
+                    ownerId: ticket.ownerId,
+                    category: ticketCategory,
+                    takenById: interaction.user.id,
+                    helpOpen: false
+                }));
                 await channel.permissionOverwrites.edit(interaction.user.id, {
                     SendMessages: true,
                     ViewChannel: true,
@@ -397,8 +406,25 @@ module.exports = {
 
                 const viewRoleIds = new Set(getTicketViewRoleIds(interaction.guild));
                 for (const roleId of getSafeModeratorRoleIds(interaction.guild)) {
-                    if (viewRoleIds.has(roleId)) continue;
-                    await channel.permissionOverwrites.edit(roleId, {ViewChannel: false});
+                    if (viewRoleIds.has(roleId)) {
+                        await channel.permissionOverwrites.edit(roleId, {
+                            ViewChannel: true,
+                            SendMessages: false,
+                            ReadMessageHistory: true
+                        });
+                        continue;
+                    }
+                    await channel.permissionOverwrites.edit(roleId, {
+                        ViewChannel: false,
+                        SendMessages: false
+                    });
+                }
+                if (ticketCategory === 'media' && /^\d{17,20}$/.test(MEDIA_MANAGER_ROLE_ID)) {
+                    await channel.permissionOverwrites.edit(MEDIA_MANAGER_ROLE_ID, {
+                        ViewChannel: true,
+                        ReadMessageHistory: true,
+                        SendMessages: false
+                    });
                 }
 
                 const components = [
@@ -419,6 +445,9 @@ module.exports = {
                     allowedMentions: allowedMentionsNone()
                 });
                 return interaction.editReply({content: "✅ Вы взяли тикет.", components: []});
+                } finally {
+                    takeTicketInFlight.delete(channel.id);
+                }
             }
 
             if (interaction.customId === "create_voice") {
@@ -429,11 +458,10 @@ module.exports = {
                 }
 
                 const ticket = getTicketStateFromChannel(interaction.channel);
-                const ticketOwnerId = ticket?.ownerId || ticketOwnerIdFromChannel(interaction.channel);
+                const ticketOwnerId = ticket?.ownerId;
                 if (!ticketOwnerId) return interaction.editReply("❌ Это не тикет.");
 
-                const takenMatch = interaction.channel.topic?.match(/TAKEN_BY:(\d{17,20})/);
-                const takenById = ticket?.takenById || (takenMatch ? takenMatch[1] : null);
+                const takenById = ticket?.takenById;
                 if (!takenById) return interaction.editReply("❌ Сначала возьмите тикет, затем создайте voice.");
                 const memberIsAdmin = isAdmin(interaction.member);
                 const memberIsCurator = isCurator(interaction.member);
@@ -450,7 +478,6 @@ module.exports = {
 
                 const botId = interaction.guild.members.me?.id || interaction.client.user.id;
                 const modRoleIds = getSafeModeratorRoleIds(interaction.guild);
-                const viewRoleIds = getTicketViewRoleIds(interaction.guild);
                 const curatorRoleIds = uniqSnowflakes([CURATOR_ROLE_ID]);
 
                 try {
@@ -481,27 +508,30 @@ module.exports = {
                                 id: ticketOwnerId,
                                 allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.Connect, PermissionFlagsBits.Speak]
                             },
+                            {
+                                id: takenById,
+                                allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.Connect, PermissionFlagsBits.Speak]
+                            },
                             ...curatorRoleIds.map(id => ({
                                 id,
                                 allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.Connect, PermissionFlagsBits.Speak]
                             })),
-                            ...uniqSnowflakes(modRoleIds).map(id => ({
+                            ...(ticket.helpOpen ? uniqSnowflakes(modRoleIds).map(id => ({
                                 id,
                                 allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.Connect, PermissionFlagsBits.Speak]
-                            })),
-                            ...uniqSnowflakes(viewRoleIds).map(id => ({
-                                id,
-                                allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.Connect]
-                            }))
+                            })) : [])
                         ]
                     });
 
-                    const currentTopic = interaction.channel.topic || "";
-                    const cleared = releaseVoiceLock(currentTopic);
-                    if (!cleared.includes("VOICE:")) {
-                        await interaction.channel.setTopic(`${cleared} | VOICE:${voice.id}`.trim()).catch(() => {
-                        });
-                    }
+                    await interaction.channel.setTopic(buildTicketTopic({
+                        ...ticket,
+                        ownerId: ticket.ownerId,
+                        category: ticket.category,
+                        takenById,
+                        voiceId: voice.id,
+                        helpOpen: ticket.helpOpen
+                    })).catch(() => {
+                    });
 
                     return interaction.editReply({content: `✅ Голосовой канал создан: ${voice}`});
                 } finally {
@@ -532,6 +562,12 @@ module.exports = {
                         ephemeral: true
                     });
                 }
+                if (ticket.helpOpen) {
+                    return interaction.reply({content: "⚠️ Помощь уже вызвана для этого тикета.", ephemeral: true});
+                }
+                if (hitCooldown(helpCooldown, interaction.channel.id, 30_000)) {
+                    return interaction.reply({content: "⏳ Нельзя вызывать помощь чаще, чем раз в 30 секунд.", ephemeral: true});
+                }
 
                 await interaction.reply({content: "🚨 **Модераторы призваны!**", ephemeral: true});
 
@@ -539,6 +575,11 @@ module.exports = {
                 for (const roleId of getSafeModeratorRoleIds(interaction.guild)) {
                     await channel.permissionOverwrites.edit(roleId, {ViewChannel: true, SendMessages: true});
                 }
+                await channel.setTopic(buildTicketTopic({
+                    ...ticket,
+                    helpOpen: true
+                })).catch(() => {
+                });
 
                 const pingRoleIds = getSafePingRoleIds(interaction.guild);
                 const pings = pingRoleIds.map(id => `<@&${id}>`).join(" ");
@@ -605,105 +646,121 @@ module.exports = {
             if (!ALLOWED_TICKET_CATEGORIES.has(category)) {
                 return interaction.reply({content: '❌ Некорректная категория тикета.', ephemeral: true});
             }
-            await interaction.deferReply({ephemeral: true});
-
-            const user = interaction.user;
-            const guild = interaction.guild;
-
-            if (!/^\d{17,20}$/.test(String(TICKET_CATEGORY_ID ?? '').trim())) {
-                return interaction.editReply("❌ Не настроен TICKET_CATEGORY_ID (env).");
+            const submitKey = `${interaction.user.id}:${category}`;
+            if (ticketSubmitInFlight.has(submitKey)) {
+                return interaction.reply({content: '⏳ Заявка уже обрабатывается, подождите.', ephemeral: true});
             }
-
-            if (findExistingTicketChannelForUser(guild, user.id)) {
-                return interaction.editReply("❌ Тикет уже существует.");
-            }
-
-            const botId = guild.members.me?.id || interaction.client.user.id;
-            const modRoleIds = getSafeModeratorRoleIds(guild);
-            const viewRoleIds = getTicketViewRoleIds(guild);
-            const curatorRoleIds = uniqSnowflakes([CURATOR_ROLE_ID]);
-
-            const permissionOverwrites = [
-                {id: guild.id, deny: [PermissionFlagsBits.ViewChannel]},
-                {
-                    id: botId,
-                    allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages, PermissionFlagsBits.ReadMessageHistory, PermissionFlagsBits.ManageChannels]
-                },
-                {
-                    id: user.id,
-                    allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.ReadMessageHistory],
-                    deny: [PermissionFlagsBits.SendMessages]
-                },
-                ...curatorRoleIds.map(id => ({
-                    id,
-                    allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages, PermissionFlagsBits.ReadMessageHistory]
-                })),
-                ...uniqSnowflakes(viewRoleIds).map(id => ({
-                    id,
-                    allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.ReadMessageHistory]
-                }))
-            ];
-
-            let pingRoleIds = [];
-            if (category === 'media') {
-                permissionOverwrites.push({
-                    id: MEDIA_MANAGER_ROLE_ID,
-                    allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.ReadMessageHistory]
-                });
-                pingRoleIds = [MEDIA_MANAGER_ROLE_ID];
-            } else if (category === 'moderator') {
-                permissionOverwrites.push({
-                    id: CURATOR_ROLE_ID,
-                    allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.ReadMessageHistory]
-                });
-                pingRoleIds = [CURATOR_ROLE_ID];
-            } else {
-                permissionOverwrites.push(...uniqSnowflakes(modRoleIds).map(id => ({
-                    id,
-                    allow: [PermissionFlagsBits.ViewChannel]
-                })));
-                pingRoleIds = getSafePingRoleIds(guild);
-            }
-
-            const channel = await guild.channels.create({
-                name: `ticket-${user.id}`,
-                type: ChannelType.GuildText,
-                parent: TICKET_CATEGORY_ID,
-                permissionOverwrites
-            });
-
-            const embed = buildTicketEmbed(category, interaction, user);
-            const row = new ActionRowBuilder().addComponents(
-                new ButtonBuilder().setCustomId("take_ticket").setLabel("Взять тикет").setEmoji("🟢").setStyle(ButtonStyle.Success)
-            );
-
-            const allowMentions = {parse: [], roles: pingRoleIds, users: []};
-            const shouldPing = (category === 'media' || category === 'moderator') ? true : isWorkingHours();
-            const pings = shouldPing ? pingRoleIds.map(id => `<@&${id}>`).join(" ") : "";
-
-            await channel.send({
-                content: pings || null,
-                embeds: [embed],
-                components: [row],
-                allowedMentions: allowMentions
-            });
-
+            ticketSubmitInFlight.add(submitKey);
             try {
-                createTicketState(channel.id, {
-                    ownerId: user.id,
-                    category,
-                    createdAt: Date.now(),
-                    lastActive: Date.now(),
-                    guildId: guild.id
+                await interaction.deferReply({ephemeral: true});
+
+                const user = interaction.user;
+                const guild = interaction.guild;
+
+                if (!/^\d{17,20}$/.test(String(TICKET_CATEGORY_ID ?? '').trim())) {
+                    return interaction.editReply("❌ Не настроен TICKET_CATEGORY_ID (env).");
+                }
+
+                if (findExistingTicketChannelForUser(guild, user.id)) {
+                    return interaction.editReply("❌ Тикет уже существует.");
+                }
+
+                const botId = guild.members.me?.id || interaction.client.user.id;
+                const modRoleIds = getSafeModeratorRoleIds(guild);
+                const viewRoleIds = getTicketViewRoleIds(guild);
+                const curatorRoleIds = uniqSnowflakes([CURATOR_ROLE_ID]);
+
+                const permissionOverwrites = [
+                    {id: guild.id, deny: [PermissionFlagsBits.ViewChannel]},
+                    {
+                        id: botId,
+                        allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages, PermissionFlagsBits.ReadMessageHistory, PermissionFlagsBits.ManageChannels]
+                    },
+                    {
+                        id: user.id,
+                        allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.ReadMessageHistory],
+                        deny: [PermissionFlagsBits.SendMessages]
+                    },
+                    ...curatorRoleIds.map(id => ({
+                        id,
+                        allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages, PermissionFlagsBits.ReadMessageHistory]
+                    })),
+                    ...uniqSnowflakes(viewRoleIds).map(id => ({
+                        id,
+                        allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.ReadMessageHistory],
+                        deny: [PermissionFlagsBits.SendMessages]
+                    }))
+                ];
+
+                let pingRoleIds = [];
+                if (category === 'media') {
+                    permissionOverwrites.push({
+                        id: MEDIA_MANAGER_ROLE_ID,
+                        allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.ReadMessageHistory],
+                        deny: [PermissionFlagsBits.SendMessages]
+                    });
+                    pingRoleIds = [MEDIA_MANAGER_ROLE_ID];
+                } else if (category === 'moderator') {
+                    permissionOverwrites.push({
+                        id: CURATOR_ROLE_ID,
+                        allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.ReadMessageHistory]
+                    });
+                    pingRoleIds = [CURATOR_ROLE_ID];
+                } else {
+                    permissionOverwrites.push(...uniqSnowflakes(modRoleIds).map(id => ({
+                        id,
+                        allow: [PermissionFlagsBits.ViewChannel],
+                        deny: [PermissionFlagsBits.SendMessages]
+                    })));
+                    pingRoleIds = getSafePingRoleIds(guild);
+                }
+
+                const channel = await guild.channels.create({
+                    name: `ticket-${user.id}`,
+                    type: ChannelType.GuildText,
+                    parent: TICKET_CATEGORY_ID,
+                    topic: buildTicketTopic({
+                        ownerId: user.id,
+                        category
+                    }),
+                    permissionOverwrites
                 });
-            } catch (e) {
-                console.error("Failed to create ticket state:", e);
-                await channel.delete().catch(() => {
+
+                const embed = buildTicketEmbed(category, interaction, user);
+                const row = new ActionRowBuilder().addComponents(
+                    new ButtonBuilder().setCustomId("take_ticket").setLabel("Взять тикет").setEmoji("🟢").setStyle(ButtonStyle.Success)
+                );
+
+                const allowMentions = {parse: [], roles: pingRoleIds, users: []};
+                const shouldPing = (category === 'media' || category === 'moderator') ? true : isWorkingHours();
+                const pings = shouldPing ? pingRoleIds.map(id => `<@&${id}>`).join(" ") : "";
+
+                await channel.send({
+                    content: pings || null,
+                    embeds: [embed],
+                    components: [row],
+                    allowedMentions: allowMentions
                 });
-                return interaction.editReply("❌ Не удалось сохранить состояние тикета. Попробуйте ещё раз.");
+
+                try {
+                    createTicketState(channel.id, {
+                        ownerId: user.id,
+                        category,
+                        createdAt: Date.now(),
+                        lastActive: Date.now(),
+                        guildId: guild.id
+                    });
+                } catch (e) {
+                    console.error("Failed to create ticket state:", e);
+                    await channel.delete().catch(() => {
+                    });
+                    return interaction.editReply("❌ Не удалось сохранить состояние тикета. Попробуйте ещё раз.");
+                }
+                updateTicketActivity(channel.id);
+                return interaction.editReply({content: `✅ Тикет создан: ${channel}`});
+            } finally {
+                ticketSubmitInFlight.delete(submitKey);
             }
-            updateTicketActivity(channel.id);
-            return interaction.editReply({content: `✅ Тикет создан: ${channel}`});
         }
     },
 };

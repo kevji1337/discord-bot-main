@@ -1,6 +1,7 @@
 const {Events, PermissionFlagsBits} = require('discord.js');
-const {getTicketsMeta, getTicketState, removeTicketMeta, removeTicketState} = require('../utils/db');
-const {isTicketChannel, ticketOwnerIdFromChannel, allowedMentionsNone} = require('../utils/helpers');
+const {getTicketsMeta, removeTicketMeta, removeTicketState} = require('../utils/db');
+const {isTicketChannel, getTicketChannelState, allowedMentionsNone} = require('../utils/helpers');
+const {runStartupSelfCheck} = require('../utils/runtime');
 const discordTranscripts = require('discord-html-transcripts');
 const {LOG_CHANNEL_ID} = process.env;
 
@@ -14,11 +15,16 @@ function getTranscriptLimit() {
     return n;
 }
 
+function shouldSaveTranscriptImages() {
+    return String(process.env.TRANSCRIPT_SAVE_IMAGES ?? '').trim().toLowerCase() === 'true';
+}
+
 module.exports = {
     name: Events.ClientReady,
     once: true,
-    execute(client) {
+    async execute(client) {
         console.log(`🤖 Бот запущен как ${client.user.tag}`);
+        await runStartupSelfCheck(client);
 
         // AUTO-CLOSE LOOP (Runs every 1 hour)
         const interval = setInterval(async () => {
@@ -76,16 +82,18 @@ module.exports = {
                                 attachment = await discordTranscripts.createTranscript(channel, {
                                     limit: getTranscriptLimit(),
                                     returnType: 'attachment',
-                                    filename: `${channel.name}-autoclose.html`
+                                    filename: `${channel.name}-autoclose.html`,
+                                    saveImages: shouldSaveTranscriptImages(),
+                                    poweredBy: false,
+                                    footerText: "Exported by Troxill Bot"
                                 });
                             } catch (e) {
                                 console.error("Auto-close transcript error:", e?.message || e);
                             }
 
-                            let logChannel = client.channels.cache.get(LOG_CHANNEL_ID) || null;
-                            if (!logChannel && LOG_CHANNEL_ID) {
-                                logChannel = await client.channels.fetch(LOG_CHANNEL_ID).catch(() => null);
-                            }
+                            const logChannel = LOG_CHANNEL_ID
+                                ? await client.channels.fetch(LOG_CHANNEL_ID).catch(() => null)
+                                : null;
                             if (logChannel) {
                                 await logChannel.send({
                                     content: `🔒 Auto-closed ticket: ${channel.name}`,
@@ -96,13 +104,12 @@ module.exports = {
 
                             // Удаляем связанный voice (если был создан), иначе он "зависает" после автозакрытия
                             try {
-                                const ticket = getTicketState(channel.id);
-                                const ownerId = ticket?.ownerId || ticketOwnerIdFromChannel(channel);
-                                const voiceMatch = channel.topic?.match(/VOICE:(\d{17,20})/);
+                                const ticket = getTicketChannelState(channel);
+                                const ownerId = ticket?.ownerId;
                                 const voices = [];
 
-                                if (voiceMatch) {
-                                    const voiceId = voiceMatch[1];
+                                if (ticket?.voiceId) {
+                                    const voiceId = ticket.voiceId;
                                     const v = await channel.guild.channels.fetch(voiceId).catch(() => null);
                                     if (v) voices.push(v);
                                 }

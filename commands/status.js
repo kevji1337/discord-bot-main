@@ -1,5 +1,7 @@
 const { SlashCommandBuilder, EmbedBuilder, PermissionFlagsBits } = require('discord.js');
 const { getStatuses, updateStatus, setStatusMessage, getStatusMessage } = require('../utils/statusManager');
+const {isCurator, isAdmin} = require('../utils/helpers');
+const STATUS_PANEL_OWNER_ID = String(process.env.STATUS_PANEL_OWNER_ID ?? '').trim();
 
 const STATUS_COLORS = {
     "Undetected": 0x2ecc71, // Green
@@ -75,7 +77,12 @@ module.exports = {
         ),
     async execute(interaction) {
         // MANUAL PERMISSION CHECK
-        if (interaction.user.id !== '1259720749820940348' && !interaction.member.permissions.has(PermissionFlagsBits.Administrator)) {
+        if (
+            interaction.user.id !== STATUS_PANEL_OWNER_ID &&
+            !interaction.member.permissions.has(PermissionFlagsBits.Administrator) &&
+            !isCurator(interaction.member) &&
+            !isAdmin(interaction.member)
+        ) {
             return interaction.reply({ content: '❌ У вас нет прав для использования этой команды.', ephemeral: true });
         }
 

@@ -1,21 +1,20 @@
 const { SlashCommandBuilder, ChannelType, PermissionFlagsBits } = require('discord.js');
-const {getTicketState} = require('../utils/db');
 const {
     isModerator,
     isCurator,
     isAdmin,
     getSafeModeratorRoleIds,
-    getTicketViewRoleIds,
-    ticketOwnerIdFromChannel
+    buildTicketTopic,
+    getTicketChannelState
 } = require('../utils/helpers');
 const { TICKET_CATEGORY_ID } = process.env;
 const CURATOR_ROLE_ID = String(process.env.CURATOR_ROLE_ID ?? '').trim();
 
 async function findExistingTicketVoiceChannel(channel, ticketOwnerId) {
     const catId = String(process.env.TICKET_CATEGORY_ID ?? '').trim();
-    const topicVoiceMatch = channel.topic?.match(/VOICE:(\d{17,20})/);
-    if (topicVoiceMatch) {
-        const v = await channel.guild.channels.fetch(topicVoiceMatch[1]).catch(() => null);
+    const ticket = getTicketChannelState(channel);
+    if (ticket?.voiceId) {
+        const v = await channel.guild.channels.fetch(ticket.voiceId).catch(() => null);
         if (v && v.type === ChannelType.GuildVoice) return v;
     }
 
@@ -52,22 +51,16 @@ function buildVoiceName(moderatorName, ownerName) {
 }
 
 async function acquireVoiceLock(channel, interactionId) {
-    const topic = String(channel.topic ?? '');
-    if (topic.includes('VOICE:')) return {ok: false, reason: 'exists'};
-    if (topic.includes('VOICE_LOCK:')) return {ok: false, reason: 'locked'};
-    const next = `${topic} | VOICE_LOCK:${interactionId}`.trim();
-    await channel.setTopic(next).catch(() => {
+    const current = getTicketChannelState(channel);
+    if (current?.voiceId) return {ok: false, reason: 'exists'};
+    if (current?.voiceLockId) return {ok: false, reason: 'locked'};
+    await channel.setTopic(buildTicketTopic({
+        ...current,
+        voiceLockId: interactionId
+    })).catch(() => {
     });
     const fresh = await channel.fetch().catch(() => channel);
-    const freshTopic = String(fresh.topic ?? '');
-    return freshTopic.includes(`VOICE_LOCK:${interactionId}`) ? {ok: true} : {ok: false, reason: 'race'};
-}
-
-function releaseVoiceLock(topic) {
-    return String(topic ?? '')
-        .replace(/\s*\|\s*VOICE_LOCK:\d{17,20}\s*/g, ' ')
-        .replace(/\s{2,}/g, ' ')
-        .trim();
+    return getTicketChannelState(fresh)?.voiceLockId === String(interactionId) ? {ok: true} : {ok: false, reason: 'race'};
 }
 
 module.exports = {
@@ -75,7 +68,7 @@ module.exports = {
         .setName('voice')
         .setDescription('Создать или управлять голосовым каналом тикета'),
     async execute(interaction) {
-        if (!interaction.channel.name.startsWith('ticket-')) {
+        if (!getTicketChannelState(interaction.channel)) {
             return interaction.reply({ content: "❌ Эту команду можно использовать только в тикетах.", ephemeral: true });
         }
 
@@ -84,8 +77,8 @@ module.exports = {
             return interaction.reply({content: "❌ Этот канал не находится в категории тикетов.", ephemeral: true});
         }
 
-        const ticket = getTicketState(interaction.channel.id);
-        const ticketOwnerId = ticket?.ownerId || ticketOwnerIdFromChannel(interaction.channel);
+        const ticket = getTicketChannelState(interaction.channel);
+        const ticketOwnerId = ticket?.ownerId;
         if (!ticketOwnerId) {
             return interaction.reply({content: "❌ Не удалось определить владельца тикета.", ephemeral: true});
         }
@@ -100,8 +93,7 @@ module.exports = {
             ephemeral: true
         });
 
-        const takenMatch = interaction.channel.topic?.match(/TAKEN_BY:(\d{17,20})/);
-        const takenById = ticket?.takenById || (takenMatch ? takenMatch[1] : null);
+        const takenById = ticket?.takenById;
         const memberIsAdmin = isAdmin(interaction.member);
         const memberIsCurator = isCurator(interaction.member);
         if (!takenById) return interaction.reply({
@@ -131,7 +123,6 @@ module.exports = {
 
             const botId = interaction.guild.members.me?.id || interaction.client.user.id;
             const modRoleIds = getSafeModeratorRoleIds(interaction.guild);
-            const viewRoleIds = getTicketViewRoleIds(interaction.guild);
             const curatorRoleIds = CURATOR_ROLE_ID && /^\d{17,20}$/.test(CURATOR_ROLE_ID) ? [CURATOR_ROLE_ID] : [];
             const voice = await interaction.guild.channels.create({
                 name: voiceName,
@@ -141,28 +132,25 @@ module.exports = {
                     { id: interaction.guild.id, deny: [PermissionFlagsBits.ViewChannel] },
                     { id: botId, allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.Connect, PermissionFlagsBits.Speak, PermissionFlagsBits.ManageChannels] },
                     { id: ticketOwnerId, allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.Connect, PermissionFlagsBits.Speak] },
+                    { id: takenById, allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.Connect, PermissionFlagsBits.Speak] },
                     ...curatorRoleIds.map(id => ({
                         id,
                         allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.Connect, PermissionFlagsBits.Speak]
                     })),
-                    ...modRoleIds.map(id => ({
+                    ...(ticket.helpOpen ? modRoleIds.map(id => ({
                         id,
                         allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.Connect, PermissionFlagsBits.Speak]
-                    })),
-                    ...viewRoleIds.map(id => ({
-                        id,
-                        allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.Connect]
-                    }))
+                    })) : [])
                 ]
             });
 
             // Save Voice ID
-            let currentTopic = interaction.channel.topic || "";
-            const cleared = releaseVoiceLock(currentTopic);
-            if (!cleared.includes("VOICE:")) {
-                await interaction.channel.setTopic(`${cleared} | VOICE:${voice.id}`.trim()).catch(() => {
-                });
-            }
+            await interaction.channel.setTopic(buildTicketTopic({
+                ...ticket,
+                voiceId: voice.id,
+                voiceLockId: null
+            })).catch(() => {
+            });
 
             await interaction.editReply(`✅ Голосовой канал создан: ${voice}`);
         } catch (e) {

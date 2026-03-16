@@ -1,13 +1,24 @@
 const { SlashCommandBuilder } = require("discord.js");
-const {getTicketState} = require("../utils/db");
 const {
     isModerator,
     isCurator,
     isAdmin,
     getSafeModeratorRoleIds,
     getSafePingRoleIds,
-    isInTicketCategory
+    isInTicketCategory,
+    buildTicketTopic,
+    getTicketChannelState
 } = require("../utils/helpers");
+
+const helpCooldown = new Map();
+
+function hitCooldown(key, ms) {
+    const now = Date.now();
+    const last = helpCooldown.get(key) || 0;
+    if (now - last < ms) return true;
+    helpCooldown.set(key, now);
+    return false;
+}
 
 module.exports = {
     data: new SlashCommandBuilder()
@@ -25,7 +36,7 @@ module.exports = {
         if (!isInTicketCategory(channel))
             return interaction.editReply("❌ Этот канал не находится в категории тикетов.");
 
-        const ticket = getTicketState(channel.id);
+        const ticket = getTicketChannelState(channel);
         if (!ticket?.ownerId)
             return interaction.editReply("❌ Для этого тикета не найдены метаданные.");
         if ((ticket.category === 'moderator' || ticket.category === 'media') && !isCurator(interaction.member))
@@ -34,6 +45,10 @@ module.exports = {
             return interaction.editReply("❌ Сначала возьмите тикет.");
         if (interaction.user.id !== ticket.takenById && !isAdmin(interaction.member) && !isCurator(interaction.member))
             return interaction.editReply("❌ Помощь может вызвать только модератор, который взял тикет.");
+        if (ticket.helpOpen)
+            return interaction.editReply("⚠️ Помощь уже вызвана для этого тикета.");
+        if (hitCooldown(channel.id, 30_000))
+            return interaction.editReply("⏳ Нельзя вызывать помощь чаще, чем раз в 30 секунд.");
 
         const modRoleIds = getSafeModeratorRoleIds(interaction.guild);
         for (const roleId of modRoleIds) {
@@ -42,6 +57,11 @@ module.exports = {
                 ViewChannel: true
             });
         }
+        await channel.setTopic(buildTicketTopic({
+            ...ticket,
+            helpOpen: true
+        })).catch(() => {
+        });
 
         const pingRoleIds = getSafePingRoleIds(interaction.guild);
         const pings = pingRoleIds.map(id => `<@&${id}>`).join(" ");

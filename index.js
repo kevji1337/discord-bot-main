@@ -2,35 +2,20 @@ require("dotenv").config();
 const fs = require('node:fs');
 const path = require('node:path');
 const { Client, Collection, GatewayIntentBits, Partials, Routes, REST } = require("discord.js");
+const { failFastOnInvalidEnv, normalizeEnvValue } = require('./utils/runtime');
 
 /* ===== ENV ===== */
-function normalizeEnv(value) {
-  return String(value ?? "")
-    .trim()
-    .replace(/^['"]+|['"]+$/g, "");
-}
+failFastOnInvalidEnv(process.env);
 
-const {
-  DISCORD_TOKEN: RAW_DISCORD_TOKEN,
-  CLIENT_ID: RAW_CLIENT_ID,
-  GUILD_ID: RAW_GUILD_ID
-} = process.env;
-
-const DISCORD_TOKEN = normalizeEnv(RAW_DISCORD_TOKEN);
-const CLIENT_ID = normalizeEnv(RAW_CLIENT_ID);
-const GUILD_ID = normalizeEnv(RAW_GUILD_ID);
-
-if (!DISCORD_TOKEN || !CLIENT_ID || !GUILD_ID) {
-  console.error("❌ ENV variables missing (DISCORD_TOKEN, CLIENT_ID, GUILD_ID)");
-  process.exit(1);
-}
+const DISCORD_TOKEN = normalizeEnvValue(process.env.DISCORD_TOKEN);
+const CLIENT_ID = normalizeEnvValue(process.env.CLIENT_ID);
+const GUILD_ID = normalizeEnvValue(process.env.GUILD_ID);
 
 /* ===== CLIENT ===== */
 const client = new Client({
   intents: [
     GatewayIntentBits.Guilds,
-    GatewayIntentBits.GuildMessages,
-    GatewayIntentBits.MessageContent
+    GatewayIntentBits.GuildMessages
   ],
   partials: [Partials.Channel]
 });
