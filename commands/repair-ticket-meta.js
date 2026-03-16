@@ -66,8 +66,7 @@ async function getLatestActivityTimestamp(channel) {
 module.exports = {
     data: new SlashCommandBuilder()
         .setName('repair-ticket-meta')
-        .setDescription('Восстановить metadata для всех тикетов')
-        .setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
+        .setDescription('Восстановить metadata для всех тикетов'),
     async execute(interaction) {
         if (!interaction.member.permissions.has(PermissionFlagsBits.Administrator) && !isCurator(interaction.member) && !isAdmin(interaction.member)) {
             return interaction.reply({content: '❌ Нет прав.', flags: MessageFlags.Ephemeral});
